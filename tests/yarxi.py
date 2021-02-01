@@ -2,11 +2,12 @@ import collections
 import unittest
 import time
 
-from src.translator import YarxiDictionary, SearchMode
+from src.search import SearchMode
+from src.yarxi import YarxiDictionary, YarxiLoader
 
 
 class YarxiTests(unittest.TestCase):
-    yd: YarxiDictionary = YarxiDictionary('../dictionaries/yarxi_19.08.2020.db')
+    yd: YarxiDictionary = YarxiLoader().from_bin()
 
     def test_garbage_numbers_in_lexeme_schema(self):
         self.assertEqual(self.yd.lookup_translations_only('悪貨は良貨を駆逐する', 'あっかはりょうかをくちくする'),

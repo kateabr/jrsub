@@ -1,11 +1,10 @@
-import re
 import unittest
 
-from src.translator import WarodaiDictionary
+from src.warodai import WarodaiDictionary, WarodaiLoader
 
 
 class MyTestCase(unittest.TestCase):
-    wd: WarodaiDictionary = WarodaiDictionary('../dictionaries/warodai_22.03.2020.txt')
+    wd: WarodaiDictionary = WarodaiLoader().from_bin()
 
     # def test_ending_punct(self):
     #     self.assertEqual(self.wd.lookup_translations_only('相争う', 'あいあらそう'), ['спорить (ссориться) друг с другом'])
