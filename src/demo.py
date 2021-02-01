@@ -3,8 +3,8 @@ from src.yarxi import YarxiDictionary, YarxiLoader
 import pickle
 
 if __name__ == '__main__':
-    # yd = YarxiLoader().load()         # full rescan
-    # yd = YarxiLoader().from_bin()     # load a snapshot
+    # yd = YarxiLoader().rescan()         # reload database from the raw source
+    # yd = YarxiLoader().load()           # load a pre-generated snapshot
     # while True:
     #     lookup_res = yd.lookup(input().strip(), input().strip())
     #     for res in lookup_res:
@@ -13,8 +13,8 @@ if __name__ == '__main__':
     #             print('  -', tr)
     #         print('')
 
-    # wd = WarodaiLoader().load()       # full rescan
-    wd = WarodaiLoader().from_bin()     # load a snapshot
+    # wd = WarodaiLoader().rescan()       # reload database from the raw source
+    wd = WarodaiLoader().load()         # load a pre-generated snapshot
     while True:
         lookup_res = wd.lookup(input().strip(), input().strip())
         for res in lookup_res:

@@ -7,7 +7,7 @@ from src.yarxi import YarxiDictionary, YarxiLoader
 
 
 class YarxiTests(unittest.TestCase):
-    yd: YarxiDictionary = YarxiLoader().from_bin()
+    yd: YarxiDictionary = YarxiLoader().load()
 
     def test_garbage_numbers_in_lexeme_schema(self):
         self.assertEqual(self.yd.lookup_translations_only('悪貨は良貨を駆逐する', 'あっかはりょうかをくちくする'),

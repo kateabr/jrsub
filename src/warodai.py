@@ -158,7 +158,7 @@ class WarodaiDictionary:
     def lookup_translations_only(self, lexeme: str, reading: str = '') -> List[str]:
         return list(dict.fromkeys(sum([tr.translation for tr in self.lookup(lexeme, reading)], [])))
 
-    def to_bin(self, fname: str = "../dictionaries/warodai.jtdb"):
+    def save(self, fname: str = "../dictionaries/warodai.jtdb"):
         pickle.dump(self, open(fname, "wb"))
 
 
@@ -1660,7 +1660,7 @@ class WarodaiLoader:
             return self._normalizer[_hiragana_to_latin(string)]
         return string
 
-    def load(self, fname: str = "../dictionaries/warodai_22.03.2020.txt", transliterate_collocations: bool = True, show_progress: bool = True) -> WarodaiDictionary:
+    def rescan(self, fname: str = "../dictionaries/warodai_22.03.2020.txt", transliterate_collocations: bool = True, show_progress: bool = True) -> WarodaiDictionary:
         self._transliterate_collocations = transliterate_collocations
 
         self._entries, temp_entries = self._load_db(fname, show_progress)
@@ -3807,5 +3807,5 @@ class WarodaiLoader:
     def _get_entry_index_by_eid(self, eid) -> int:
         return self._entries.index(self._get_entry_by_eid(eid))
 
-    def from_bin(self, fname: str = "../dictionaries/warodai.jtdb") -> WarodaiDictionary:
+    def load(self, fname: str = "../dictionaries/warodai.jtdb") -> WarodaiDictionary:
         return pickle.load(open(fname, "rb"))

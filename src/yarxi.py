@@ -116,7 +116,7 @@ class YarxiDictionary:
         entry = self._get_entry_by_eid(eid)
         return entry.translation + _retrieve_from_references(entry.references, [entry.eid])
 
-    def to_bin(self, fname: str = "../dictionaries/yarxi.jtdb"):
+    def save(self, fname: str = "../dictionaries/yarxi.jtdb"):
         pickle.dump(self, open(fname, "wb"))
 
 
@@ -556,7 +556,7 @@ class YarxiLoader:
                                                     translation=[self._in_compounds_pref + kj.rus_nick],
                                                     eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
 
-    def load(self, fname: str = "../dictionaries/yarxi_19.08.2020.db", show_progress: bool = True) -> YarxiDictionary:
+    def rescan(self, fname: str = "../dictionaries/yarxi_19.08.2020.db", show_progress: bool = True) -> YarxiDictionary:
         self._kanji_db = self._load_kanji_db(fname, show_progress)
         self._entries = self._load_db(fname, show_progress)
         self._resolve_references(show_progress)
@@ -564,5 +564,5 @@ class YarxiLoader:
 
         return YarxiDictionary(self._entries)
 
-    def from_bin(self, fname: str = "../dictionaries/yarxi.jtdb") -> YarxiDictionary:
+    def load(self, fname: str = "../dictionaries/yarxi.jtdb") -> YarxiDictionary:
         return pickle.load(open(fname, "rb"))

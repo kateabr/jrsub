@@ -4,7 +4,7 @@ from src.warodai import WarodaiDictionary, WarodaiLoader
 
 
 class MyTestCase(unittest.TestCase):
-    wd: WarodaiDictionary = WarodaiLoader().from_bin()
+    wd: WarodaiDictionary = WarodaiLoader().load()
 
     # def test_ending_punct(self):
     #     self.assertEqual(self.wd.lookup_translations_only('相争う', 'あいあらそう'), ['спорить (ссориться) друг с другом'])
