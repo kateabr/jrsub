@@ -1957,7 +1957,7 @@ class WarodaiLoader:
                 if not any(_is_hira_or_kata(char) for char in tr_temp):
                     cleaned_translations.append(tr)
 
-            not_to_confuse_expressions = [r"(\(<i>не смешивать с.+?\))",
+            not_to_confuse_expressions = [r"(\(<i>не смешивать с.+?\)\s?)",
                                           r"(<i>не смешивать .+?</i> <a href=.+?>.+?</a>)",
                                           r"(\d\) <i>не смешивать с.+)"]
             for exp in not_to_confuse_expressions:
