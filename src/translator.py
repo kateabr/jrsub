@@ -1,0 +1,4503 @@
+import re
+from dataclasses import dataclass, field
+from typing import List, Tuple
+from jtran import JTran
+import sqlite3
+from tqdm import tqdm
+from operator import itemgetter
+from enum import Enum
+from unicodedata import name as un_name
+
+AMOUNT_STR = ''
+
+
+class SearchMode(Enum):
+    consecutive = 0
+    deep_only = 1
+    shallow_only = 2
+
+
+def _is_hiragana(char) -> bool:
+    return 'HIRAGANA' == un_name(char).split()[0]
+
+
+def _is_katakana(char) -> bool:
+    return 'KATAKANA' == un_name(char).split()[0]
+
+
+def _is_hira_or_kata(char) -> bool:
+    return _is_hiragana(char) or _is_katakana(char) or char in ['ー', '々']
+
+
+def _is_kanji(char) -> bool:
+    return 'CJK' == un_name(char).split()[0]
+
+
+def _is_cyr_or_lat(char) -> bool:
+    return un_name(char).split()[0] in ['CYRILLIC', 'LATIN']
+
+
+def _latin_to_hiragana(latin: str, colons_to_double_vowel: bool = True) -> str:
+    return JTran.transliterate_from_latn_to_hrkt(latin, colons_to_double_vowel=colons_to_double_vowel)
+
+
+def _latin_to_katakana(latin: str) -> str:
+    return JTran.transliterate_from_hira_to_kana(JTran.transliterate_from_latn_to_hrkt(latin, False))
+
+
+def _hiragana_to_latin(hiragana: str) -> str:
+    return JTran.transliterate_from_hira_to_latn(hiragana)
+
+
+def _distance(this: str, other: str) -> float:
+    this_temp = this * 1
+    common_chars = 0
+    diff_chars = 0
+    for char in other:
+        if char in this_temp:
+            common_chars += 1
+            this_temp = this_temp.replace(char, '', 1)
+        else:
+            diff_chars += 1
+    dist = float(common_chars) / max(len(this), len(other)) - (diff_chars + len(this_temp))
+
+    this_kj = [ch for ch in this if _is_kanji(ch)]
+    other_kj = [ch for ch in other if _is_kanji(ch)]
+    common_kj = 0
+    for kj in other_kj:
+        if kj in this_kj:
+            common_kj += 1
+            this_kj.remove(kj)
+
+    dist -= len(other_kj) / max((common_kj + len(this_kj)), 1) - 5 if not this_kj else 0
+
+    return dist
+
+
+@dataclass
+class Entry:
+    reading: List[str]
+    lexeme: List[str]
+    translation: List[str]
+    eid: str
+
+
+@dataclass
+class Reference:
+    eid: str
+    mode: str = ''
+    lexeme: List[str] = field(default_factory=list)
+    verified: bool = False
+    usable: bool = False
+
+
+@dataclass
+class WarodaiReference(Reference):
+    meaning_number: List[str] = field(default_factory=list)
+    reading: List[str] = field(default_factory=list)
+    prefix: str = ''
+    body: str = ''
+
+    def __eq__(self, other):
+        return self.eid == other.eid and self.mode == other.mode and self.lexeme == other.lexeme and self.reading == other.reading
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return int(self.eid.replace('-', '')) + int(''.join(self.meaning_number))
+
+
+@dataclass
+class YarxiReference(Reference):
+    pass
+
+
+@dataclass
+class WarodaiEntry(Entry):
+    translation: {str: List[str]}
+    references: {str: List[WarodaiReference]}
+    lexeme_id: str = ''
+
+    def __eq__(self, other):
+        return self.eid == other.eid
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return int(self.eid.replace('-', ''))
+
+
+@dataclass
+class WarodaiEid:
+    val1: int
+    val2: int
+    val3: int
+
+    def inc(self) -> str:
+        inc2, self.val3 = divmod(self.val3 + 1, 1000)
+        inc1, self.val2 = divmod(self.val2 + inc2, 100)
+        self.val1 += inc1
+        return str(self)
+
+    def __init__(self, eid: str):
+        split_eid = eid.split('-')
+        self.val1 = int(split_eid[0])
+        self.val2 = int(split_eid[1])
+        self.val3 = int(split_eid[2])
+
+    def __str__(self):
+        return f'{str(self.val1).rjust(3, "0")}-{str(self.val2).rjust(2, "0")}-{str(self.val3).rjust(2, "0")}'
+
+    def __eq__(self, other: WarodaiReference):
+        return str(self) == str(other)
+
+    def __gt__(self, other: WarodaiReference):
+        return str(self) > str(other)
+
+    def __lt__(self, other: WarodaiReference):
+        return str(self) < str(other)
+
+
+@dataclass
+class YarxiEntry(Entry):
+    references: List[YarxiReference]
+    kanji: List[str]
+
+    def __eq__(self, other):
+        return self.eid == other.eid
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return int(self.eid)
+
+
+@dataclass
+class SearchResult:
+    reading: List[str]
+    lexeme: List[str]
+    translation: List[str]
+
+
+class YarxiDictionary:
+    @dataclass
+    class _Kanji:
+        kanji: str
+        kun: str
+        on: str
+        rus: str
+        rus_nick: str
+
+    _entries: List[YarxiEntry]
+    _kanji_db: {str: (str, str, str, str)}
+
+    _unreliable_translations: bool = True
+    _unreliable_translations_pref: str = '〈возм. перевод〉 '
+    _in_compounds_pref: str = '〈в сочет.〉 '
+
+    _collocations_right: {str: str} = {'*1': 'suru', '*2': 'na', '**2': 'no aru', '*3': 'no', '*=56': 'shite aru',
+                                       '*7': 'taru',
+                                       '*=28': 'naku', '**1': 'ga aru', '*5': 'de', '**3': 'no nai', '**7': 'ni suru',
+                                       '**0': 'wo suru',
+                                       '*=32': 'teki', '***8': 'to shita', '**4': 'de aru', '**8': 'ni naru',
+                                       '*0': 'shita',
+                                       '*4': 'ni', '*6': 'to', '*=30': 'ni (~de)', '***1': 'kara', '*=02': 'atte',
+                                       '*=01': 'aru',
+                                       '**9': 'to shite', '*=03': 'ga nai', '*=16': 'mo nai', '**6': 'da',
+                                       '*=43': '[ni] suru',
+                                       '*=53': 'wo yaru', '*=66': 'to [shite]', '*8': 'shite', '***5': 'to suru',
+                                       '*=11': 'desu ka?', '*=07': 'demo', '***9': 'to shite iru', '*=06': 'ga suru',
+                                       '*=31': 'ni mo', '*=86': 'subeki', '*=55': 'sareru', '*=54': 'saseru',
+                                       '*=69': 'to nareba',
+                                       '***3': 'mo', '*=04': 'ga atte', '*=14': 'ka', '*9': 'to shite',
+                                       '*=24': 'na[ru]',
+                                       '*=91': 'to natte', '*=62': 'to naru', '***2': 'made', '*=15': 'made mo',
+                                       '*=34': 'ni [shite]',
+                                       '*=23': 'narazu', '*=33': 'ni shite', '*=08': 'de wa', '*=13': 'de suru',
+                                       '*=19': 'nagara',
+                                       '*=37': 'ni natte iru', '*=51': 'wo shite iru', '*=71': 'e', '*=84': 'wo shite',
+                                       '*=79': 'naraba',
+                                       '*=59': 'shinai', '*=36': 'ni natte', '*=09': 'de nai', '*=81': 'narashimeru',
+                                       '**5': 'desu',
+                                       '*=25': 'nasai', '*=10': 'de (~ni)', '*=18': 'mo naku', '***4': 'wa',
+                                       '*=73': 'ga gotoshi',
+                                       '*=12': 'deshita', '*=29': 'ni (~wa)', '***0': 'naru', '*=50': '[wo] suru',
+                                       '*=45': '[no] aru',
+                                       '*=27': 'naki', '*=35': 'ni nai', '*=21': 'na (~no)', '*=38': 'ni aru',
+                                       '*=82': 'ni [natte]',
+                                       '*=87': 'sureba', '*=20': 'nai', '*=00': '!', '*=65': '[to] shita',
+                                       '*=92': 'suru na',
+                                       '*=67': 'to mo', '*=60': 'sezu ni', '*=74': 'de kara', '*=42': 'sarete',
+                                       '*=40': 'ni iru',
+                                       '*=58': 'shimasu', '*=44': 'ni yaru', '*=88': 'shite mo', '*=90': 'yaru',
+                                       '*=57': 'su',
+                                       '*=41': 'ni naranai', '*=17': '[mo] nai', '*=49': 'wo', '*=93': 'ni oite',
+                                       '*=78': 'su[ru]',
+                                       '*=85': 'shinagara', '*=26': 'nashi no', '*=52': 'wo shita', '*=39': 'ni sareru',
+                                       '*=48': 'no suru', '*=70': 'to [naku]', '***6': 'yori', '*=80': 'naranu',
+                                       '***7': 'ga shite iru',
+                                       '*=89': 'to mo shinai', '*=77': 'mono de', '*=46': 'no shita',
+                                       '*=47': 'no shinai',
+                                       '*=61': 'seru', '*=72': 'sarete iru', '*=83': 'wo shinai', '*=22': 'narazaru',
+                                       '*=75': 'dake no', '*=05': 'ga shite aru', '*=68': 'to mo sureba',
+                                       '*=63': 'to saseru'}
+    _collocations_left: {str: str} = {'*-6': 'to', '*-3': 'no', '*-4': 'ni', '*-7': 'wo', '*-0': 'wa', '*-8': 'ga',
+                                      '*-1': '(kara)',
+                                      '*-5': '(de)', '*-9': '(suru)'}
+
+    def lookup(self, lexeme: str, reading: str = '', search_mode: SearchMode = SearchMode.consecutive,
+               order: int = 1) -> List[SearchResult]:
+        if order < 1:
+            raise Exception(f'Error: order value ({order}) is less than 1')
+        if int(search_mode.value) not in [0, 1, 2]:
+            raise Exception(f'Error: unknown search mode ({search_mode})')
+        if any(not (_is_kanji(char) or _is_hira_or_kata(char)) for char in lexeme):
+            raise Exception(f'Error: bad characters in lexeme ({lexeme})')
+        if reading and any(not _is_hiragana(char) for char in reading):
+            raise Exception(f'Error: bad characters in reading ({reading})')
+
+        res = []
+        suitable_entries = []
+        if search_mode != SearchMode.deep_only:
+            suitable_entries = [e for e in self._entries if lexeme in e.lexeme]
+            if reading:
+                suitable_entries = [e for e in suitable_entries if reading in e.reading]
+
+        if search_mode != SearchMode.shallow_only and not suitable_entries:
+            lex_kanji = [k for k in lexeme if _is_kanji(k)]
+            if lex_kanji:
+                for char in lexeme:
+                    if _is_kanji(char):
+                        res.extend(
+                            [entry for entry in self._entries if any(lex for lex in entry.lexeme if char in lex)])
+
+                res = list(set(res))
+                if reading:
+                    narrowed_res = [r for r in res if reading in r.reading]
+                    if narrowed_res:
+                        res = narrowed_res
+
+                weighted_res = []
+
+                for r in res:
+                    weighted_res.append([0.0, r.eid])
+
+                if len(weighted_res) > 1:
+                    for w_r in weighted_res:
+                        for lex in self._get_entry_by_eid(w_r[1]).lexeme:
+                            w_r[0] = _distance(lexeme, lex)
+
+                weighted_res.sort(key=itemgetter(0), reverse=True)
+                orders = sorted(list(set([r[0] for r in weighted_res])), reverse=True)
+                suitable_entries = [self._get_entry_by_eid(e[1]) for e in weighted_res if
+                                    e[0] >= orders[min(len(orders) - 1, order - 1)]]
+            else:
+                suitable_entries = [e for e in self._entries if lexeme in e.lexeme or lexeme in e.reading]
+
+        final_res = []
+
+        for entry in suitable_entries:
+            final_res.append(
+                SearchResult(reading=entry.reading, lexeme=entry.lexeme,
+                             translation=self._translate_by_eid(entry.eid)))
+        return final_res
+
+    def lookup_translations_only(self, lexeme: str, reading: str = '', search_mode: SearchMode = SearchMode.consecutive,
+                                 order: int = 1) -> List[str]:
+        return list(
+            set(sum([tr.translation for tr in self.lookup(lexeme, reading, search_mode, order)], [])))
+
+    def set_unreliable_translations(self, value: bool):
+        self._unreliable_translations = value
+
+    def set_unreliable_translations_pref(self, value: str):
+        if value:
+            self._unreliable_translations_pref = value + ' '
+        else:
+            self._unreliable_translations_pref = ''
+
+    def set_in_compounds_pref(self, value: str):
+        if value:
+            self._in_compounds_pref = value + ' '
+        else:
+            self._in_compounds_pref = ''
+
+    def _get_entry_by_eid(self, eid: str) -> YarxiEntry:
+        return [e for e in self._entries if e.eid == eid][0]
+
+    def _get_kanji(self, code: str) -> str:
+        return self._kanji_db[code].kanji
+
+    def _get_next_eid(self) -> str:
+        return str(int(self._entries[-1].eid) + 1)
+
+    def _load_kanji_db(self, fname, show_progress: bool = True) -> {str: str}:
+        conn = sqlite3.connect(fname)
+        cursor = conn.cursor()
+        res = {'0': self._Kanji('', '', '', '', ''), '-1': self._Kanji('', '', '', '', '')}
+
+        kanji = cursor.execute('SELECT Nomer, Uncd, Kunyomi, Onyomi, Russian, RusNick from Kanji').fetchall()
+        for eid, uncd, kun, on, rus, rus_nick in tqdm(kanji, desc='[Yarxi] Building kanji database'.ljust(34),
+                                                      disable=not show_progress):
+            res[str(eid)] = self._Kanji(kanji=chr(int(uncd)), kun=kun, on=on, rus=rus, rus_nick=rus_nick.lower())
+        conn.close()
+
+        return res
+
+    def _resolve_references(self, show_progress: bool) -> [YarxiReference]:
+        for entry in tqdm(self._entries, desc='[Yarxi] Resolving references'.ljust(34), disable=not show_progress):
+            refs = entry.references
+            if refs:
+                original_length = len(refs)
+                for i in range(0, original_length):
+                    if refs[i].eid:
+                        refs[i].verified = True
+                        refs[i].usable = True
+                    else:
+                        fitting = [et for et in self._entries if any(lex in et.lexeme for lex in refs[i].lexeme)]
+                        if len(fitting) > 1:
+                            fitting = [f for f in fitting if list(set(f.reading) & set(entry.reading))]
+                        if len(fitting) == 1:
+                            refs[i].eid = fitting[0].eid
+                            refs[i].lexeme = ''
+                            refs[i].verified = True
+                            refs[i].usable = True
+                        else:
+                            for fit in [et for et in self._entries if refs[i].lexeme in et.lexeme]:
+                                refs.append(YarxiReference(eid=fit.eid, verified=False, usable=True, mode=refs[i].mode))
+
+    def _load_db(self, fname, show_progress: bool = True) -> List[YarxiEntry]:
+        conn = sqlite3.connect(fname)
+        cursor = conn.cursor()
+        res = []
+
+        tango = cursor.execute(f"SELECT K1, K2, K3, K4, Kana, Reading, Russian, Nomer, Hyphens FROM Tango").fetchall()[
+                :-1]
+        for k1, k2, k3, k4, kana, reading, translation, eid, hyphens in tqdm(tango,
+                                                                             desc='[Yarxi] Building word database'.ljust(
+                                                                                 34),
+                                                                             disable=not show_progress):
+            res.extend(self._convert_to_entry_tango(
+                (str(k1), str(k2), str(k3), str(k4), kana, reading, translation, str(eid), hyphens)))
+        conn.close()
+
+        return res
+
+    def _clean_text(self, text: str) -> str:
+        text = re.sub(r'^_', '', text)
+        text = re.sub(r'(\^[\^|@])', '', text)
+        text = re.sub(r'([^\s])_([^\s])', r'\1, \2', text)
+        text = re.sub(r'^!', '', text)
+        text = re.sub(r"-\\''\\\w+\\''", '', text)
+        text = text.replace('@3(', ' и т.п. (')
+        text = text.replace('@3', ' и т.п.')
+        text = re.sub(r'(\(#)(.*?)(#\))', r'(\2)', text)
+        text = re.sub(r'#(.*?)#', r'\\《\1》\\', text)
+        text = text.replace('#', '')
+        text = re.sub(r'(\\\'\'\\)([^\s].*)(\\\'\'\\)', r'\\«\2»\\', text)
+        text = text.replace('\'', '')
+        for _ in [1, 2]:
+            text = re.sub(r'([^\(\[《\-\s])\\(《|[\\|\(|#|\w|\d|«|\[])', r'\1 \2', text)
+        text = text.replace(')(', ') (')
+        text = text.replace('》(', '》 (')
+        text = text.replace('\\', '')
+        text = text.replace('^^', '')
+        text = text.replace('= ', ' ')
+        text = re.sub(r'^[^\[]*(\*\d+])', r'[\1', text)
+        text = re.sub(r'(\s?)(\*+=?\d+)',
+                      lambda m: f" 〈~{self._collocations_right[m.group(2)]}〉",
+                      text)
+        text = re.sub(r'(\s?)(\*+-\d+)',
+                      lambda m: f" 〈-{self._collocations_left[m.group(2)]}〉",
+                      text)
+        text = text.replace('[ 〈', '[〈')
+        return text.lower().strip()
+
+    def _convert_to_entry_tango(self, info: Tuple[str, str, str, str, str, str, str, str, str]) -> List[YarxiEntry]:
+        def _resolve_readings(reading: str, variable: bool, hyphens: str) -> List[str]:
+            def _resolve_hh(reading: str, hyphens: str) -> str:
+                for h_pos in re.findall(r'\d+', hyphens):
+                    if 'hh' not in reading[:int(h_pos)] + reading[int(h_pos) + 1:]:
+                        reading = reading[:int(h_pos)] + reading[int(h_pos) + 1:]
+                return reading
+
+            reading = re.sub(r'(\*?Q\d)', '', reading)
+            reading = reading.replace('$', '')
+
+            if variable:
+                split_reading = reading.split('*(*')
+                full_reading = [r for r in split_reading[0].split('*') if r]
+                if len(split_reading) > 1:
+                    base_reading = [r for r in split_reading[1].split('*') if r][-len(full_reading):]
+                else:
+                    base_reading = []
+                res = full_reading + base_reading
+            else:
+                res = [r for r in reading.split('*(*')[0].split('*')]
+
+            if 'hh' in res[0]:
+                for i in range(0, len(res)):
+                    res[i] = _resolve_hh(res[i], hyphens)
+
+            return sorted([_latin_to_hiragana(rd).strip() for rd in res if rd], key=len)
+
+        def _resolve_lexemes(lexeme: str) -> (List[str], List[str], bool):
+            kanji = [('1', self._get_kanji(k1)), ('2', self._get_kanji(k2)), ('3', self._get_kanji(k3)),
+                     ('4', self._get_kanji(k4))]
+            if not lexeme:
+                return [k[1] for k in kanji if k[1]], [''.join([k[1] for k in kanji])], False
+            if not [kj for kj in lexeme if kj.isnumeric() and kj != '0']:
+                lexeme += '1234'
+
+            other = {'0': '', "'": 'っ'}
+
+            additional_kanji = re.findall(r'#(\d+)#', lexeme)
+            for add_kj in additional_kanji:
+                kanji.append((len(kanji), self._get_kanji(add_kj)))
+            kanji_for_entry = [k[1] for k in kanji if k[1]]
+            lexeme = re.sub(r'(#\d+#)', '', lexeme)
+
+            lex_temp = ''
+            cur_pos = 0
+            while True:
+                if cur_pos == len(lexeme):
+                    lexeme = lex_temp + ''.join([kj[1] for kj in kanji])
+                    break
+                if lexeme[cur_pos].isnumeric():
+                    if kanji and int(lexeme[cur_pos]) > int(kanji[0][0]):
+                        for i in range(int(lexeme[cur_pos]), int(kanji[0][0]) - 1, -1):
+                            if not kanji:
+                                break
+                            lex_temp += kanji[0][1]
+                            kanji = kanji[1:]
+                        cur_pos += 1
+                    elif kanji and lexeme[cur_pos] == kanji[0][0]:
+                        lex_temp += kanji[0][1]
+                        kanji = kanji[1:]
+                        cur_pos += 1
+                    else:
+                        cur_pos += 1
+                        continue
+                else:
+                    lex_temp += lexeme[cur_pos]
+                    cur_pos += 1
+
+            for key, value in other.items():
+                lexeme = lexeme.replace(key, value)
+
+            if '^' in lexeme:
+                lexeme = re.sub(r'\^([\w:]+)@?', lambda x: _latin_to_katakana(x.group(1)), lexeme)
+                lexeme = re.sub(r'([\w:]*)', lambda x: _latin_to_hiragana(x.group(1)), lexeme)
+            else:
+                lexeme = _latin_to_hiragana(lexeme, False)
+
+            if '[' in lexeme:
+                return kanji_for_entry, [re.sub(r'(\[(.*?)\])', '', lexeme).strip(),
+                                         re.sub(r'\[(.*?)\]', r'\1', lexeme).strip()], False
+            elif '(' in lexeme:
+                return kanji_for_entry, [re.sub(r'(\((.*?)\))', '', lexeme).strip(),
+                                         re.sub(r'\((.*?)\)', r'\1', lexeme).strip()], True
+
+            return kanji_for_entry, [lexeme.strip()], False
+
+        def _extract_references(translation: str) -> (List[str], List[str]):
+            def _extract_reference(translation: str) -> (str, str):
+                res = []
+
+                word_refs = re.findall(r'\^{2}10*(\d+)(?:\_)?', translation)
+                word_refs.extend(re.findall(r'\^0+(\d+)(?:\_)?', translation))
+                word_refs.extend(re.findall(r'\^20*(\d+)(?:\_)?', translation))
+
+                if word_refs:
+                    if re.search(r'^\\?#\\?.*?\\?#\\?\^\d+\\_', translation) is not None:
+                        mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^\d+\\_', translation).group(1))
+                        translation = ''
+                    else:
+                        mode = ''
+
+                    for word_ref in word_refs:
+                        res.append(YarxiReference(eid=re.search(r'0*(\d+)', word_ref).group(1), mode=mode))
+
+                kanji_refs = []
+                kanji_refs.extend(re.findall(r'\^0-0*(\d+)-?(?:\\\'\'\\([\w|\s]+)\\\'\')?', translation))
+                kanji_refs.extend(re.findall(r'\^2-0*(\d+)-?(?:\\\'\'\\([\w|\s]+)\\\'\')?', translation))
+
+                if kanji_refs:
+                    if re.search(r'^\\?#\\?.*?\\?#\\?\^\d+\\_', translation) is not None:
+                        mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^\d+\\_', translation).group(1))
+                        translation = ''
+                    else:
+                        mode = ''
+
+                    for kanji_ref in kanji_refs:
+                        res.append(
+                            YarxiReference(
+                                lexeme=[self._get_kanji(kanji_ref[0]) + _latin_to_hiragana(kanji_ref[1].strip())],
+                                eid='', mode=mode))
+
+                return res, re.sub(r'(\^+\d-?\d+)(-\\\'\'\\([\w|\s]+)\\\'\'\\)?(?:\\_)?', '', translation)
+
+            def _split_translation(translation: str) -> List[str]:
+                translation = re.sub(r'^>{2}', '', translation)
+                translation = translation.replace('$', '')
+                translation = re.sub(r'\(!\d+\)', '', translation)
+
+                common_part = ''
+                cnt = -1
+                while True:
+                    cnt += 1
+                    if cnt == len(translation) or translation[cnt] == '&':
+                        break
+                    else:
+                        common_part += translation[cnt]
+
+                numbered_translations = [tr for tr in translation[cnt + 1:].split('&') if tr]
+                if numbered_translations and len(numbered_translations[0]) == len(translation) - 1:
+                    return numbered_translations
+
+                if len(numbered_translations) <= 1:
+                    return [common_part]
+
+                return [common_part + tr for tr in numbered_translations]
+
+            ref_tr = [_extract_reference(tr.strip()) for tr in _split_translation(translation)]
+
+            return sum([elem[0] for elem in ref_tr], []), [elem[1] for elem in ref_tr if elem[1]]
+
+        def _resolve_translations(translation: List[str]) -> List[str]:
+            def _clean_translation(translation: str) -> str:
+                generic_translations = {'1': 'мужское имя', '11': 'мужское имя',
+                                        '2': 'женское имя', '22': 'женское имя',
+                                        '3': 'фамилия', '33': 'фамилии',
+                                        '4': 'псевдоним', '44': 'псевдонимы',
+                                        '5': 'топоним', '55': 'топонимы'}
+
+                g_tr = re.search(r'>(\d+)', translation)
+                temp = []
+                if g_tr is not None:
+                    for tr in g_tr.group(1):
+                        if tr != '0':
+                            temp.append(generic_translations[tr])
+                    translation = f"《{' или '.join(temp)}》"
+                else:
+                    translation = self._clean_text(translation)
+
+                return translation
+
+            res = []
+
+            for tr in translation:
+                cleaned = _clean_translation(tr)
+                if cleaned:
+                    res.append(cleaned)
+
+            return res
+
+        res = []
+
+        k1, k2, k3, k4, lexeme_schema, reading, translation, eid, hyphens = info
+
+        kanji, lexemes, variable_reading = _resolve_lexemes(lexeme_schema)
+        readings = _resolve_readings(reading, variable_reading, hyphens)
+        references, translations = _extract_references(translation)
+        if any('^^' in tr for tr in translations):
+            lexemes.extend(readings)
+        translations = _resolve_translations(translations)
+
+        res.append(
+            YarxiEntry(reading=readings, lexeme=lexemes, translation=translations, eid=eid, references=references,
+                       kanji=kanji))
+
+        return res
+
+    def _extract_compound_values(self, kanji: {str: _Kanji}, show_progress: bool):
+        def _split_and_clean_compound_translations(translations: str, rus_nick: str) -> (str, int):
+            translations = re.sub(r'{!.*}', '-', translations)
+
+            if translations == '-':
+                return [], []
+
+            reading_numbers = []
+            final_trs = []
+            translations = re.sub(r'\{\^*\w\d+\}', '', translations)
+            translations = re.sub(r'(\[!.*?\])', '', translations)
+            translations = re.sub(r'(\+{\(.*\)})', '', translations)
+
+            generic_translations = {'@9': '《тж. счетный суффикс》', '@3': '', '@7': '', '@6': rus_nick, '@4': rus_nick,
+                                    '@2': rus_nick, '@1': rus_nick, '@5': '《встречается в географических названиях》',
+                                    '@8': '《в сочетаниях идиоматичен》', '@l': '《употребляется в летоисчислении》',
+                                    '@0': '《употребляется фонетически》'}
+
+            for translation in [tr for tr in translations.split('/') if tr]:
+                nums_present = re.search(r'\((\d*)\)', translation)
+                if nums_present is None:
+                    reading_numbers.append(['0'])
+                else:
+                    reading_numbers.append(list(nums_present.groups()))
+
+                for g_tr in generic_translations.keys():
+                    if g_tr in translation:
+                        translation = translation.replace(g_tr, f' {generic_translations[g_tr]} ').strip()
+
+                final_trs.append(self._clean_text(re.sub(r'(\(\d*\))?$', '', translation)))
+
+            return list(zip(reading_numbers, [fin_tr for fin_tr in final_trs if fin_tr]))
+
+        for kj in tqdm(list(kanji.values())[2:], desc="[Yarxi] Updating kanji database".ljust(34), disable=not
+        show_progress):
+
+            comp_readings = {'0': [_latin_to_hiragana(on) for on in re.findall(r'\*(.*?)\*', kj.on)]}
+
+            cleaned_kun = re.sub(r'\|\|\$.*?\$', '', kj.kun)
+
+            comp_readings_temp = re.search(r'\|(.*)', cleaned_kun)
+            if comp_readings_temp:
+                for sp_c_r in comp_readings_temp.group(1).split('/'):
+                    readings = re.split(r'[_|,]', _latin_to_hiragana(sp_c_r.replace('-', '').lower()))
+                    comp_readings[str(len(comp_readings))] = readings
+
+            if not comp_readings['0']:
+                continue
+
+            comp_translations = kj.rus.split('|')
+
+            if len(comp_translations) > 1:
+                comp_translations = _split_and_clean_compound_translations(comp_translations[1], kj.rus_nick)
+                for tr in comp_translations:
+                    if kj.on == '-':
+                        continue
+                    if not tr:
+                        translation = re.sub(r'(.*\*#\*)(.*)(\*)', r'\2', kj.rus_nick)
+                        translation = _latin_to_hiragana(
+                            re.sub(r'\'\'(.*)\'\'', lambda match: f'«{match.group(1)}»', translation))
+                        self._entries.append(YarxiEntry(reading=[on for on in kj.on.split('*') if on], lexeme=kj.kanji,
+                                                        translation=[self._in_compounds_pref + translation],
+                                                        eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+                    else:
+                        for tr_r in tr[0]:
+                            self._entries.append(YarxiEntry(reading=comp_readings[tr_r], lexeme=kj.kanji,
+                                                            translation=[self._in_compounds_pref + tr[1]],
+                                                            eid=str(self._get_next_eid()), references=[],
+                                                            kanji=kj.kanji))
+            else:
+                nom_val = re.search(r'~=(.+)', kj.rus)
+                if nom_val is not None:
+                    self._entries.append(YarxiEntry(reading=comp_readings['0'], lexeme=kj.kanji,
+                                                    translation=[
+                                                        self._in_compounds_pref + self._clean_text(nom_val.group(1))],
+                                                    eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+                nom_val = re.search(r'~\$(.+)', kj.rus)
+                if nom_val is not None:
+                    self._entries.append(YarxiEntry(reading=comp_readings['0'], lexeme=kj.kanji,
+                                                    translation=[self._in_compounds_pref + kj.rus_nick],
+                                                    eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+
+    def __init__(self, fname: str, show_progress: bool = True):
+        self._kanji_db = self._load_kanji_db(fname, show_progress)
+        self._entries = self._load_db(fname, show_progress)
+        self._resolve_references(show_progress)
+        self._extract_compound_values(self._kanji_db, show_progress)
+
+    def _translate_by_eid(self, eid: str) -> List[str]:
+        def _retrieve_from_references(refs: List[YarxiReference], visited_references: List[str]) -> List[str]:
+            if not refs:
+                return []
+
+            usable_refs = [ref for ref in refs if ref.usable]
+
+            referenced_entries = [(usable_ref.verified, usable_ref.mode, self._get_entry_by_eid(usable_ref.eid)) for
+                                  usable_ref in
+                                  usable_refs]
+
+            translations = []
+            usable_refs = []
+
+            for reference_verified, reference_mode, referenced_entry in referenced_entries:
+                if referenced_entry.eid in visited_references:
+                    continue
+                if reference_verified:
+                    translations.extend([' '.join([reference_mode, tr]).strip() for tr in referenced_entry.translation])
+                elif self._unreliable_translations:
+                    translations.extend(
+                        [self._unreliable_translations_pref + reference_mode + tr for tr in
+                         referenced_entry.translation])
+
+                usable_refs.extend([ref for ref in referenced_entry.references if ref.usable])
+                visited_references.append(referenced_entry.eid)
+
+            return translations + _retrieve_from_references(usable_refs, visited_references)
+
+        entry = self._get_entry_by_eid(eid)
+        return entry.translation + _retrieve_from_references(entry.references, [entry.eid])
+
+
+class WarodaiDictionary:
+    _entries: List[WarodaiEntry]
+    _transliterate_collocations: bool
+    _normalizer: {str: str} = {'noaru': 'no aru',
+                               'no': 'no',
+                               'taru': 'taru',
+                               'suru': 'suru',
+                               'nisuru': 'ni suru',
+                               'ninaru': 'ni naru',
+                               'shite': 'shite',
+                               'deyaru': 'de yaru',
+                               'na': 'na',
+                               'nonai': 'no nai',
+                               'wosuru': 'wo suru',
+                               'su[ru]': 'su[ru]',
+                               'toshiteiru': 'to shite iru',
+                               'to': 'to',
+                               '[to]shita': '[to] shita',
+                               'de': 'de',
+                               'gasuru': 'ga suru',
+                               'ni': 'ni',
+                               '[ni]ha': '[ni] wa',
+                               '[no]shita': '[no] shita',
+                               'dearu': 'de aru',
+                               'gaaru': 'ga aru',
+                               'aru': 'aru',
+                               '[to]': '[to]',
+                               '[ni]': '[ni]',
+                               'kara': 'kara',
+                               '[no]': '[no]',
+                               'niaru': 'ni aru',
+                               'he': 'e',
+                               'made': 'made',
+                               'ninatte': 'ni natte',
+                               'tosuru': 'to suru',
+                               'toshite': 'to shite',
+                               'ganai': 'ga nai', 'tonaru': 'to naru', 'shita': 'shita', 'shinai': 'shinai',
+                               'monai': 'mo nai',
+                               '！': '!',
+                               'niyaru': 'ni yaru',
+                               'woyaru': 'wo yaru',
+                               'sareru': 'sareru',
+                               '[mo]naku': '[mo] naku',
+                               'ba': 'ba',
+                               'wo': 'wo',
+                               'naru': 'naru',
+                               'nimo': 'ni mo',
+                               'saseru': 'saseru',
+                               'tonaku': 'to naku 【鳴く】',
+                               '[ka]no': '[ka] no',
+                               '[ka]': '[ka]',
+                               'subeki': 'subeki',
+                               'toshinai': 'to shinai',
+                               'gaatte': 'ga atte',
+                               'yori': 'yori',
+                               'mo': 'mo',
+                               'tomonaku': 'to mo naku',
+                               'heka': 'e ka',
+                               'ka': 'ka',
+                               '[toshite]': '[to shite]',
+                               'naku': 'naku',
+                               'na[ru]': 'na[ru]',
+                               'ni[shite]': 'ni [shite]',
+                               'tonatte': 'to natte',
+                               'nishite': 'ni shite',
+                               'wonasu': 'wo nasu',
+                               'nishiteyaru': 'ni shite yaru',
+                               'desuru': 'de suru',
+                               '[ha]': '[wa]',
+                               'ninatteiru': 'ni natte iru',
+                               'woshiteiru': 'wo shite iru',
+                               'nashi': 'nashi',
+                               'naki': 'naki',
+                               'shiteiru': 'shite iru',
+                               '[na]': '[na]',
+                               'noshita': 'no shita',
+                               'to[shite]': 'to [shite]',
+                               '[wo]suru': '[wo] suru',
+                               '[no]aru': '[no] aru',
+                               'narashimeru': 'narashimeru',
+                               'ni(no)': 'ni (no)',
+                               'monaku': 'mo naku',
+                               'karano': 'kara no',
+                               'da': 'da',
+                               '[de]': '[de]',
+                               'nosuru': 'no suru',
+                               '[shite]': '[shite]',
+                               'woshita': 'wo shita',
+                               '[ni]suru': '[ni] suru',
+                               'woshinai': 'wo shinai',
+                               '[shita]': '[shita]',
+                               'nishinai': 'ni shinai',
+                               'seru': 'seru',
+                               '[noaru]': '[no aru]',
+                               'toshita': 'to shita',
+                               'tosureba': 'to sureba',
+                               'toshitemo': 'to shite mo',
+                               'sureba': 'sureba',
+                               'sarenai': 'sarenai',
+                               'ninai': 'ni nai',
+                               'tari': 'tari',
+                               'nai': 'nai',
+                               '[ga]suru': '[ga] suru',
+                               '[to]shiteiru': '[to] shite iru',
+                               'sarete': 'sarete',
+                               'wosaseru': 'wo saseru',
+                               'niatte': 'ni atte',
+                               'woshite': 'wo shite',
+                               'seshimeru': 'seshimeru',
+                               'shite…wosaseru': 'shite… wo saseru',
+                               '[kara]': '[kara]',
+                               'ga': 'ga',
+                               'tosuru(naru)': 'to suru (naru)',
+                               'niyori': 'ni yori',
+                               'ha': 'wa',
+                               'nimonai': 'ni mo nai',
+                               'kara[no]': 'kara [no]',
+                               'nishiteiru': 'ni shite iru',
+                               '[notame]ni': '[no tame] ni',
+                               'ni[natte]': 'ni [natte]',
+                               'nara': 'nara',
+                               'deha': 'de wa',
+                               '[taru]': '[taru]',
+                               'ninarau': 'ni narau',
+                               'ni！': 'ni!',
+                               'denai': 'de nai',
+                               'ga…aru': "ga… aru",
+                               'shitearu': 'shite aru',
+                               '[naru]': '[naru]',
+                               'shiteinai': 'shite inai',
+                               'sareta': 'sareta',
+                               'desu': 'desu',
+                               'tonaru(suru)': 'to naru (suru)',
+                               'naran': 'naran',
+                               'noshitearu': 'no shite aru',
+                               'no(ninaru)': 'no (ni naru)',
+                               'shinagara': 'shinagara',
+                               'nagara': 'nagara',
+                               'womotte': 'wo motte',
+                               'niyotte': 'ni yotte',
+                               'noshinai': 'no shinai',
+                               'suru(naru)': 'suru (naru)',
+                               'demo': 'demo',
+                               'tarashimeru': 'tarashimeru',
+                               'ni…wosuru': 'ni… wo suru',
+                               'nika': 'ni ka',
+                               '[de]mo': '[de]mo',
+                               'temo': 'te mo',
+                               'nisareru': 'ni sareru',
+                               'to[naku]': 'to [naku]',
+                               '[mo]': '[mo]',
+                               'tonai': 'to nai',
+                               'ninatta': 'ni natta',
+                               'no(ni)': 'no (ni)',
+                               'nishita': 'ni shita',
+                               'denaku': 'de naku',
+                               'sasete': 'sasete',
+                               'gashiteiru': 'ga shite iru',
+                               'shite…suru': 'shite… suru',
+                               'ni…suru': 'ni… suru',
+                               'deiru': 'de iru',
+                               'ganaku': 'ga naku',
+                               'ni[te]': 'ni[te]',
+                               'no[aru]': 'no [aru]',
+                               'wosuru(yaru)': 'wo suru (yaru)',
+                               'gashinai': 'ga shinai',
+                               'ni[oite]': 'ni [oite]',
+                               'wo…to': 'wo… to',
+                               'ninaranai': 'ni naranai',
+                               '[mo]nai': '[mo] nai',
+                               'nisaseru': 'ni saseru',
+                               'ni…saseru': 'ni… saseru',
+                               'ni[mo]': 'ni [mo]',
+                               'sezaru': 'sezaru',
+                               'naraba': 'naraba',
+                               'nisuru(naru)': 'ni suru (naru)',
+                               'sareteiru': 'sarete iru',
+                               '的': 'teki 【的】',
+                               '的no': 'teki 【的】 no',
+                               '的ni': 'teki 【的】 ni',
+                               '[的]': '[teki 【的】]',
+                               '的[na]': 'teki 【的】 [na]',
+                               '[的no]': '[teki 【的】 no]',
+                               '的na': 'teki 【的】 na',
+                               '的[no]': 'teki 【的】 [no]',
+                               '[的]ni': '[teki 【的】] ni',
+                               '～': '~',
+                               '…': '-',
+                               'gasuru(gaaru)': 'ga suru (ga aru)',
+                               '[ga]aru': '[ga] aru',
+                               'suru(dearu)': 'suru (de aru)',
+                               'to(ni)': 'to (ni)',
+                               'niiru': 'ni iru',
+                               'ni(to)suru': 'ni (to) suru',
+                               'ninaruto': 'ni naru to',
+                               'toshite(suru)': 'to shite (suru)',
+                               'dearu(ninaru)': 'de aru (ni naru)',
+                               '[niha]': '[ni wa]',
+                               '＝': '',
+                               '｜': '|',
+                               '落chiru': 'ochiru 【落ちる】',
+                               'shite置ku': 'shite oku 【置く】',
+                               'de飲mu': 'de nomu 【飲む】',
+                               'nikakaru': 'ni kakaru',
+                               'ni倒reru': 'ni taoreru 【倒れる】',
+                               '最後no一周ha彼no': 'saigo 【最後】 no isshuu 【一周】 wa kare 【彼】 no',
+                               'no観gaatta': 'no kan 【観】 ga atta',
+                               'wo踏mu': 'wo fumu 【踏む】',
+                               '二十円': 'nijuuen 【二十円】',
+                               '禁zezu': 'kinzezu 【禁ぜず】',
+                               'de行ku': 'de iku 【行く】',
+                               '両極端ha': 'ryoukyokutan 【両極端】 wa',
+                               'su': 'su',
+                               'wo言u': 'wo iu 【言う】',
+                               'wo打tsu': 'wo utsu 【打つ】',
+                               '顔wo': 'kao 【顔】 wo',
+                               'kotowo知ranu': 'koto wo shiranu 【知らぬ】',
+                               'no笑iwo浮beru': 'no warai 【笑い】 wo ukaberu 【浮べる】',
+                               '夜no': 'yoru 【夜】 no',
+                               '空': 'sora 【空】',
+                               '夜ga': 'yoru 【夜】 ga',
+                               'ta': 'ta',
+                               'douzo': 'douzo',
+                               '[思tte下sai]': '[omotte 【思って】 kudasai 【下さい】]',
+                               'wo厳重nisuru': 'wo genjuu 【厳重】 ni suru',
+                               'gayoi': 'ga yoi',
+                               '人': 'hito 【人】',
+                               'wo使u': 'wo tsukau 【使う】',
+                               '二人ha': 'futari 【二人】 wa',
+                               'to逃geru': 'to nigeru 【逃げる】',
+                               '消eteshimau': 'kiete 【消えて】 shimau',
+                               'iu': 'iu',
+                               'yaru': 'yaru',
+                               'no雪': 'no yuki 【雪】',
+                               'wohishigu': 'wo hishigu',
+                               'wo抜ku': 'wo nuku 【抜く】',
+                               'ni振ru舞u': 'ni furumau 【振る舞う】',
+                               '目ni': 'me 【目】 ni',
+                               '疑心': 'gishin 【疑心】',
+                               'wo生zu': 'wo shouzu 【生ず】',
+                               'tosuruni足ru': 'to suru ni taru 【足る】',
+                               '意ni': 'i 【意】 ni',
+                               '故人': 'kojin 【故人】',
+                               'dakara君karayaritamae': 'dakara kimi 【君】 kara yaritamae',
+                               'no概gaaru': 'no gai 【概】 ga aru',
+                               'wosarasu': 'wo sarasu',
+                               'noyoi': 'no yoi',
+                               '夫婦ha': 'fuufu 【夫婦】 wa',
+                               'no年頃': 'no toshigoro 【年頃】',
+                               '[打tte]': '[utte 【打って】]',
+                               'ni及bazu': 'ni oyobazu 【及ばず】',
+                               'no中/ウチ/ni収meru': 'no uchi 【中】 ni osameru 【収める】',
+                               'notsuwamono': 'no tsuwamono',
+                               'no夢/ユメ/': 'no yume 【夢】',
+                               '五分試meshinisuru': 'gobudameshi 【五分試めし】 ni suru',
+                               'wo云u': 'wo iu 【云う】',
+                               'ikimashou': 'ikimashou',
+                               '地ni塗reru': 'chi 【地】 ni mamireru 【塗れる】',
+                               'no力wo貸su': 'no chikara 【力】 wo kasu 【貸す】',
+                               '変watta男': 'kawatta 【変わった】 otoko 【男】',
+                               'wo以te労wo待tsu': 'wo motte 【以て】 rou 【労】 wo matsu 【待つ】',
+                               '赤n坊ni': 'akanbou 【赤ん坊】 ni',
+                               'woyatte見ru': 'wo yatte miru 【見る】',
+                               '見eru': 'mieru 【見える】',
+                               'nomamade買u': 'no mama de kau 【買う】',
+                               '逃geru': 'nigeru 【逃げる】',
+                               'to申su': 'to mousu 【申す】',
+                               'ni出ru': 'ni deru 【出る】',
+                               'no子': 'no ko 【子】',
+                               'toiu所gaaru': 'to iu tokoro 【所】 ga aru',
+                               'no月': 'no tsuki 【月】',
+                               'no所': 'no tokoro 【所】',
+                               'zutto': 'zutto',
+                               '返事': 'henji 【返事】',
+                               'no女': 'no onna 【女】',
+                               'bakarini': 'bakari ni',
+                               'areba水心/ミズゴコロ/': 'areba mizugokoro 【水心】',
+                               '顔wosuru': 'kao 【顔】 wo suru',
+                               'ni身wo沈meru': 'ni mi 【身】 wo shizumeru 【沈める】',
+                               'no衆': 'no shuu 【衆】',
+                               '得意no鼻wo': 'tokui 【得意】 no hana 【鼻】 wo',
+                               'ni縛ru': 'ni shibaru 【縛る】',
+                               'wo差su': 'wo sasu 【差す】',
+                               'wo並be立teru': 'wo narabetateru 【並べ立てる】',
+                               'ga上garanai': 'ga agaranai 【上がらない】',
+                               'no小槌': 'no kozuchi 【小槌】',
+                               '一点no': 'itten 【一点】 no',
+                               'wo切ru': 'wo kiru 【切る】',
+                               'no強i男': 'no tsuyoi 【強い】 otoko 【男】',
+                               'detsuitahodonosukimonai': 'de tsuita hodo no suki mo nai',
+                               'no尼': 'no ama 【尼】',
+                               'narukana': 'naru ka na',
+                               'nashini': 'nashi ni',
+                               'nonaiyouni': 'no nai you ni',
+                               'ni買i言葉': 'ni kaikotoba 【買い言葉】',
+                               'ni泣ku': 'ni naku 【泣く】',
+                               'no空': 'no sora 【空】',
+                               'tomosuntomo言wanai': 'to mo sun to mo iwanai 【言わない】',
+                               'mo言warenu': 'mo iwarenu 【言われぬ】',
+                               'ni達suru': 'ni tassuru 【達する】',
+                               '時wo': 'toki 【時】 wo',
+                               'ni振舞u': 'ni furumau 【振舞う】',
+                               'no沙汰/サタ/': 'no sata 【沙汰】',
+                               'no知renai': 'no shirenai 【知れない】',
+                               'ni入/イ/ru': 'ni iru 【入る】',
+                               'no士': 'no shi 【士】',
+                               'wo伸basu': 'wo nobasu 【伸ばす】',
+                               '泣ku': 'naku 【泣く】',
+                               'wo食u': 'wo kuu 【食う】',
+                               'wokaku': 'wo kaku',
+                               'ni言u': 'ni iu 【言う】',
+                               'sonnakotogaarukashira！arutomo、arutomo': 'sonna koto ga aru kashira! aru tomo, arutomo',
+                               'ni腐tte': 'ni kusatte 【腐って】',
+                               'no鉄砲': 'no teppou 【鉄砲】',
+                               'wo付keru': 'wo tsukeru 【付ける】',
+                               'ni見ru': 'ni miru 【見る】',
+                               'ni揉meru': 'ni momeru 【揉める】',
+                               'nasai': 'nasai',
+                               'ni入reru': 'ni ireru 【入れる】',
+                               'no夫': 'no otto 【夫】',
+                               '子供no': 'kodomo 【子供】 no',
+                               'korede': 'kore de',
+                               'dayo': 'da yo',
+                               '申shimashita': 'moushimashita 【申しました】',
+                               'wo吹kaseru': 'wo fukaseru 【吹かせる】',
+                               'wo吹kasu': 'wo fukasu 【吹かす】',
+                               'ga悪i': 'ga warui 【悪い】',
+                               'de育teru': 'de sodateru 【育てる】',
+                               'wo去ri実/ジツ/ni就ku': 'wo sari 【去り】 jitsu 【実】 ni tsuku 【就く】',
+                               'no者': 'no mono 【者】',
+                               'no恥wososogu': 'no haji 【恥】 wo sosogu',
+                               'wo叫bu': 'wo sakebu 【叫ぶ】',
+                               '人口ni': 'jinkou 【人口】 ni',
+                               'no作者': 'no sakusha 【作者】',
+                               'no動物': 'no doubutsu 【動物】',
+                               'naranu': 'naranu',
+                               'ga出来nai': 'ga dekinai 【出来ない】',
+                               'no医者': 'no isha 【医者】',
+                               'no式': 'no shiki 【式】',
+                               '涙ni': 'namida 【涙】 ni',
+                               'gaii': 'ga ii',
+                               'nookori': 'no okori',
+                               'woiu': 'wo iu',
+                               'wo利ku': 'wo kiku 【利く】',
+                               '[詐欺]wo働ku': '[sagi 【詐欺】] wo hataraku 【働く】',
+                               '御': 'go 【御】',
+                               'wo祈ru': 'wo inoru 【祈る】',
+                               'no国ni遊bu': 'no kuni 【国】 ni asobu 【遊ぶ】',
+                               'no典': 'no ten 【典】',
+                               'noノ:ト': 'no NOUTO 【ノート】',
+                               'wo取ru': 'wo toru 【取る】',
+                               '風no': 'kaze 【風】 no',
+                               'wotsuku': 'wo tsuku',
+                               'ni乗seru': 'ni noseru 【乗せる】',
+                               'to音wo立tete落chiru': 'to oto 【音】 wo tatete 【立てて】 ochiru 【落ちる】',
+                               'no時計': 'no tokei 【時計】',
+                               'no感gaaru': 'no kan 【感】 ga aru',
+                               'no悪i': 'no warui 【悪い】',
+                               'ni立tsu': 'ni tatsu 【立つ】',
+                               'noyoi女': 'no yoi onna 【女】',
+                               '髪no': 'kami 【髪】 no',
+                               '鼻wo': 'hana 【鼻】 wo',
+                               'to笑u': 'to warau 【笑う】',
+                               '音wo立teru': 'oto 【音】 wo tateru 【立てる】',
+                               '声wo': 'koe 【声】 wo',
+                               '世ha': 'yo 【世】 wa',
+                               'to乱reta': 'to midareta 【乱れた】',
+                               'ga故ni': 'ga yue 【故】 ni',
+                               '声ga': 'koe 【声】 ga',
+                               '犬no': 'inu 【犬】 no',
+                               '酒no': 'sake 【酒】 no',
+                               'wosuru(付keru)': 'wo suru (tsukeru 【付ける】)',
+                               'wo交jieru': 'wo majieru 【交じえる】',
+                               'no論': 'no ron 【論】',
+                               'no至ridearu': 'no itari 【至り】 de aru',
+                               '事務wo': 'jimu 【事務】 wo',
+                               '生死no': 'seishi 【生死】 no',
+                               'no道': 'no michi 【道】',
+                               'no祭/マツリ/': 'no matsuri 【祭】',
+                               'mou': 'mou',
+                               'no緒/o/ga切reta': 'no o 【緒】 ga kireta 【切れた】',
+                               'no人': 'no hito 【人】',
+                               'nakimade': 'naki made',
+                               'no交wari': 'no majiwari 【交わり】',
+                               'no政治家': 'no seijika 【政治家】',
+                               '鳴ku': 'naku 【鳴く】',
+                               '飲mu': 'nomu 【飲む】',
+                               'ni帰suru': 'ni kisuru 【帰する】',
+                               '言u': 'iu 【言う】',
+                               'to鳴ru': 'to naru 【鳴る】',
+                               '[no者]': '[no mono 【者】]',
+                               'no男': 'no otoko 【男】',
+                               'suru(shitai)': 'suru (shitai)',
+                               'no下ni': 'no moto 【下】 ni',
+                               'sorega': 'sore ga',
+                               'datta': 'datta',
+                               'no紋': 'no mon 【紋】',
+                               '妙na': 'myou 【妙】 na',
+                               'ga動ite': 'ga ugoite 【動いて】',
+                               '鳴ru': 'naru 【鳴る】',
+                               '矢nogotoshi': 'ya 【矢】 no gotoshi',
+                               'no齢/ヨワイ/': 'no yowai 【齢】',
+                               'ni入/ハイ/ru': 'ni hairu 【入る】',
+                               '私ha': 'watashi 【私】 wa',
+                               'no別re': 'no wakare 【別れ】',
+                               '叫bu': 'sakebu 【叫ぶ】',
+                               'no一毛/イチモウ/': 'no ichimou 【一毛】',
+                               'no位/クライ/': 'no kurai 【位】',
+                               '万事': 'banji 【万事】',
+                               'no地': 'no chi 【地】',
+                               '半/ナカバ/': 'nakaba 【半】',
+                               'de指su': 'de sasu 【指す】',
+                               'no巷': 'no chimata 【巷】',
+                               'noエゾ': 'no EZO 【エゾ】',
+                               'no戦術': 'no senjutsu 【戦術】',
+                               'no徒': 'no to 【徒】',
+                               'toshite退場suru': 'to shite taijousuru 【退場する】',
+                               'toshite動kanai': 'to shite ugokanai 【動かない】',
+                               'wo進meru': 'wo susumeru 【進める】',
+                               '目wo': 'me 【目】 wo',
+                               '眺meru': 'nagameru 【眺める】',
+                               'no娘': 'no musume 【娘】',
+                               'no栄': 'no ei 【栄】',
+                               'no夢': 'no yume 【夢】',
+                               '[no身]': '[no mi 【身】]',
+                               '相和/アイワ/su[ru]': 'aiwasu[ru] 【相和す[る]】',
+                               '更ni花wo添eru': 'sara 【更】 ni hana 【花】 wo soeru 【添える】',
+                               'wo起su': 'wo okosu 【起す】',
+                               '顔付': 'kaotsuki 【顔付】',
+                               '言u音': 'iu 【言う】 oto 【音】',
+                               'de進mu': 'de susumu 【進む】',
+                               'dane': 'da ne',
+                               'ni葬rareru': 'ni houmurareru 【葬られる】',
+                               'wo肥/コ/yasu': 'wo koyasu 【肥やす】',
+                               'to光ru': 'to hikaru 【光る】',
+                               '歯wo鳴rasu': 'ha 【歯】 wo narasu 【鳴らす】',
+                               '音gasuru': 'oto 【音】 ga suru',
+                               'wonameru': 'wo nameru',
+                               '毛no': 'ke 【毛】 no',
+                               '彼ha': 'kare 【彼】 wa',
+                               'ni落着iteiru': 'ni ochitsuite 【落着いて】 iru',
+                               'nikenasu': 'ni kenasu',
+                               'wo買tte出ru': 'wo katte 【買って】 deru 【出る】',
+                               'na事wo言u': 'na koto 【事】 wo iu 【言う】',
+                               '月光': 'gekkou 【月光】',
+                               'no水': 'no mizu 【水】',
+                               'no家': 'no ie 【家】',
+                               'no貰i損': 'no moraizon 【貰い損】',
+                               '日ga': 'hi 【日】 ga',
+                               'no様na人dakari': 'no you 【様】 na hitodakari 【人だかり】',
+                               '鹿児島': 'kagoshima 【鹿児島】',
+                               'he行ku': 'e iku 【行く】',
+                               'no音/ne/': 'no ne 【音】',
+                               'nikowareru': 'ni kowareru',
+                               '眠ru': 'nemuru 【眠る】',
+                               '煮ru': 'niru 【煮る】',
+                               'ni酔pparau': 'ni yopparau 【酔っぱらう】',
+                               'ni行ku': 'ni iku 【行く】',
+                               'no美人': 'no bijin 【美人】',
+                               'wo直su': 'wo naosu 【直す】',
+                               'no勢de': 'no ikioi 【勢】 de',
+                               'ni伏奏su': 'ni fukusousu 【伏奏す】',
+                               'wo補u': 'wo oginau 【補う】',
+                               'no乱': 'no ran 【乱】',
+                               'ni触reru': 'ni fureru 【触れる】',
+                               '痩seru': 'yaseru 【痩せる】',
+                               '笑u': 'warau 【笑う】',
+                               'no生徒': 'no seito 【生徒】',
+                               'ni当tte見ru': 'ni atatte 【当って】 miru 【見る】',
+                               '泡/アワ/wo飛bashite': 'awa 【泡】 wo tobashite 【飛ばして】',
+                               'no念': 'no nen 【念】',
+                               'ni微笑wotataete': 'ni bishou 【微笑】 wo tataete',
+                               '獅子no': 'shishi 【獅子】 no',
+                               'wohineru': 'wo hineru',
+                               'wo傾keru': 'wo katamukeru 【傾ける】',
+                               'wokashigeru': 'wo kashigeru',
+                               'tobakari': 'to bakari',
+                               'ni待tsu': 'ni matsu 【待つ】',
+                               'bakari': 'bakari',
+                               'wo屈meru': 'wo kagameru 【屈める】',
+                               '風邪wo': 'kaze 【風邪】 wo',
+                               '居眠riwosuru': 'inemuri 【居眠り】 wo suru',
+                               'ni話su': 'ni hanasu 【話す】',
+                               'to頭wo打chitsukeru': 'to atama 【頭】 wo uchitsukeru 【打ちつける】',
+                               'to音gashita': 'to oto 【音】 ga shita',
+                               'te': 'te',
+                               'no計(策)': 'no kei 【計】 (saku 【策】)',
+                               'to鳴ku': 'to naku 【鳴く】',
+                               '一tsunishita': 'hitotsu 【一つ】 ni shita',
+                               '御通知申shi上gemasu': 'gotsuuchi 【御通知】 moushiagemasu 【申し上げます】',
+                               'no民/タミ/': 'no tami 【民】',
+                               'ni歩ku': 'ni aruku 【歩く】',
+                               'wosukuu': 'wo sukuu',
+                               'ni挟mu': 'ni hasamu 【挟む】',
+                               '家/イエ/no': 'ie 【家】 no',
+                               'to焼keteiru': 'to yakete 【焼けて】 iru',
+                               'to飲mu': 'to nomu 【飲む】',
+                               'no舞/マイ/': 'no mai 【舞】',
+                               'to打tsu': 'to utsu 【打つ】',
+                               '[no道/ドウ/]': '[no dou 【道】]',
+                               'to寝転bu': 'to nekorobu 【寝転ぶ】',
+                               '小刀wo': 'kogatana 【小刀】 wo',
+                               'ni持tsu(取ru)': 'ni motsu 【持つ】 (toru 【取る】)',
+                               'ga起ru': 'ga okoru 【起る】',
+                               '事': 'koto 【事】',
+                               '涙': 'namida 【涙】',
+                               'no楼閣/ロウカク/': 'no roukaku 【楼閣】',
+                               'wo決mekomu': 'wo kimekomu 【決めこむ】',
+                               'to泣ku': 'to naku 【泣く】',
+                               '言umo': 'iu 【言う】 mo',
+                               '日/ヒ/既ni': 'hi 【日】 sude 【既】 ni',
+                               'no礼wotoru': 'no rei 【礼】 wo toru',
+                               'no才': 'no sai 【才】',
+                               'no舌/シタ/wo振u': 'no shita 【舌】 wo furuu 【振う】',
+                               'wo極meta': 'wo kiwameta 【極めた】',
+                               'to包丁wo入reru': 'to houchou 【包丁】 wo ireru 【入れる】',
+                               '[to]湯ni入/ハイ/ru': '[to] yu 【湯】 ni hairu 【入る】',
+                               '[to]飛bi込mu': '[to] tobikomu 【飛び込む】',
+                               '舌ni': 'shita 【舌】 ni',
+                               'no二': 'no ni 【二】',
+                               '身ni': 'mi 【身】 ni',
+                               'no兔': 'no usagi 【兔】',
+                               'no臣': 'no shin 【臣】',
+                               'shitemo及banai': 'shite mo oyobanai 【及ばない】',
+                               '両端wo持/ジ/su': 'ryoutan 【両端】 wo jisu 【持す】',
+                               'wo誤razu': 'wo ayamarazu 【誤らず】',
+                               'no誉/ホマレ/gaaru': 'no homare 【誉】 ga aru',
+                               'ni乗ru': 'ni noru 【乗る】',
+                               '夜ha': 'yoru 【夜】 wa',
+                               'to更kete行ku': 'to fukete 【更けて】 iku 【行く】',
+                               'wokakete言u': 'wo kakete iu 【言う】',
+                               'nikotaeru': 'ni kotaeru',
+                               'no物tosuru': 'no mono 【物】 to suru',
+                               '[wo]踏mu': '[wo] fumu 【踏む】',
+                               'no明/メイ/gaaru': 'no mei 【明】 ga aru',
+                               'sono言ha今monao': 'sono koto 【言】 wa ima 【今】 mo nao',
+                               'no従業員': 'no juugyouin 【従業員】',
+                               'no職員': 'no shokuin 【職員】',
+                               'no八九made': 'no hakku 【八九】 made',
+                               'ni陥ru': 'ni ochiiru 【陥る】',
+                               'notame': 'no tame',
+                               'wo挙geru': 'wo ageru 【挙げる】',
+                               'nouchi': 'no uchi',
+                               'no節句/セック/': 'no sekku 【節句】',
+                               'janai': 'ja nai',
+                               '見ru': 'miru 【見る】',
+                               'ni落chinai': 'ni ochinai 【落ちない】',
+                               '[to]飛bu': '[to] tobu 【飛ぶ】',
+                               'wo決suru': 'wo kessuru 【決する】',
+                               '夫婦ninaru': 'fuufu 【夫婦】 ni naru',
+                               '転bu': 'korobu 【転ぶ】',
+                               'korobu': 'korobu',
+                               'ni行ki過giru': 'ni ikisugiru 【行き過ぎる】',
+                               'untomo': 'un to mo',
+                               'tomo言wanai': 'to mo iwanai 【言わない】',
+                               'ni切ru': 'ni kiru 【切る】',
+                               'to倒reru': 'to taoreru 【倒れる】',
+                               '[to]刺su': '[to] sasu 【刺す】',
+                               'ni酔u': 'ni you 【酔う】',
+                               'to落chiru': 'to ochiru 【落ちる】',
+                               'ni力wo入reru': 'ni chikara 【力】 wo ireru 【入れる】',
+                               'no権': 'no ken 【権】',
+                               'ni起然tosuru': 'ni chouzen 【起然】 to suru',
+                               'no遣ri方': 'no yarikata 【遣り方】',
+                               'no谷': 'no tani 【谷】',
+                               'wo着keru': 'wo tsukeru 【着ける】',
+                               '面/ツラ/no皮ga': 'tsura 【面】 no kawa 【皮】 ga',
+                               'ni暮su': 'ni kurasu 【暮す】',
+                               '追(逐)tte': 'otte 【追って, 逐って】',
+                               'wo傾倒suru': 'wo keitousuru 【傾倒する】',
+                               '[御免下sai]': '[gomen 【御免】 kudasai 【下さい】]',
+                               'no琴/コト/': 'no koto 【琴】',
+                               'ni浮bu': 'ni ukabu 【浮ぶ】',
+                               'ni現wareru': 'ni arawareru 【現われる】',
+                               'no仁/ジン/': 'no jin 【仁】',
+                               'toshite鳴ru': 'to shite naru 【鳴る】',
+                               'no本': 'no hon 【本】',
+                               'wokakeru': 'wo kakeru',
+                               'no足': 'no ashi 【足】',
+                               '模様wo': 'moyou 【模様】 wo',
+                               '風ga': 'kaze 【風】 ga',
+                               '吹ku': 'fuku 【吹く】',
+                               'kara物wo見ru': 'kara mono 【物】 wo miru 【見る】',
+                               'ni縛rareta': 'ni shibarareta 【縛られた】',
+                               'no見物wosuru': 'no kenbutsu 【見物】 wo suru',
+                               '済qi/セイセイ/': 'seisei 【済々】',
+                               'no状態dearu': 'no joutai 【状態】 de aru',
+                               'no中/ウチ/ni': 'no uchi 【中】 ni',
+                               '小便wo': 'shouben 【小便】 wo',
+                               'sono': 'sono',
+                               'ni卵wo': 'ni tamago 【卵】 wo',
+                               'nishite置ku': 'ni shite oku 【置く】',
+                               'no如ku': 'no gotoku 【如く】',
+                               '不信任no': 'fushinnin 【不信任】 no',
+                               'no思igasuru': 'no omoi 【思い】 ga suru',
+                               'ni進mu': 'ni susumu 【進む】',
+                               'hasamu': 'hasamu',
+                               'no味wo覚eru': 'no aji 【味】 wo oboeru 【覚える】',
+                               'no一針': 'no isshin 【一針】',
+                               '木ni止maru': 'ki 【木】 ni tomaru 【止まる】',
+                               'wo出su': 'wo dasu 【出す】',
+                               'ni侍/ジ/su': 'ni jisu 【侍す】',
+                               'o': 'o',
+                               'woshimashite申訳arimasen': 'wo shimashite moushiwake 【申訳】 arimasen',
+                               'ga良i': 'ga ii 【良い】',
+                               '口wo': 'kuchi 【口】 wo',
+                               '五日': 'itsuka 【五日】',
+                               '権威': "ken'i 【権威】",
+                               'no為ni': 'no tame 【為】 ni',
+                               '身wo': 'mi 【身】 wo',
+                               '無shi': 'nashi 【無し】',
+                               'wo認mezu': 'wo mitomezu 【認めず】',
+                               'de歩ku': 'de aruku 【歩く】',
+                               '歩ku': 'aruku 【歩く】',
+                               'wo引ite待tteiru': 'wo hiite 【引いて】 matte 【待って】 iru',
+                               'wo引ku': 'wo hiku 【引く】',
+                               '酒wo': 'sake 【酒】 wo',
+                               'ni取ru': 'ni toru 【取る】',
+                               'no急': 'no kyuu 【急】',
+                               '『済mimasen』': '『sumimasen 【済みません】』',
+                               '事wo言u': 'koto 【事】 wo iu 【言う】',
+                               '両刀wo': 'ryoutou 【両刀】 wo',
+                               'wokamu': 'wo kamu',
+                               'woshite寝ru': 'wo shite neru 【寝る】',
+                               'no筆wo揮u': 'no fude 【筆】 wo furuu 【揮う】',
+                               'to酔u': 'to you 【酔う】',
+                               'no吏': 'no ri 【吏】',
+                               'ga利ku': 'ga kiku 【利く】',
+                               'mo無i': 'mo nai 【無い】',
+                               '様na': 'you 【様】 na',
+                               'yatsu': 'yatsu',
+                               '写真wo': 'shashin 【写真】 wo',
+                               'no友': 'no tomo 【友】',
+                               '[wo(ni)]': '[wo (ni)]',
+                               'ni落chiru': 'ni ochiru 【落ちる】',
+                               '倒reru': 'taoreru 【倒れる】',
+                               'wo割ru': 'wo waru 【割る】',
+                               'urikosu': 'urikosu',
+                               '買越/カイコ/su': 'kaikosu 【買越す】',
+                               '天wo突ku': 'ten 【天】 wo saku 【突く】',
+                               'wo決meru': 'wo kimeru 【決める】',
+                               'no煩i': 'no wazurai 【煩い】',
+                               'no憂i': 'no urei 【憂い】',
+                               'no石持草/イシモチソ:/': 'no ishimochisou 【石持草】',
+                               'ha両眼wo': 'wa ryougan 【両眼】 wo',
+                               'ita': 'ita',
+                               'monaihodo': 'mo nai hodo',
+                               '事mo': 'koto 【事】 mo',
+                               '思案no': 'shian 【思案】 no',
+                               '髪wo': 'kami 【髪】 wo',
+                               'woageru': 'wo ageru',
+                               'wohagasu': 'wo hagasu',
+                               'no寿': 'no ju 【寿】',
+                               'no難事': 'no nanji 【難事】',
+                               '怒ttano': 'okotta 【怒った】 no',
+                               '思u': 'omou 【思う】',
+                               'no所dearu': 'no tokoro 【所】 de aru',
+                               'no武士': 'no bushi 【武士】',
+                               'no戸': 'no to 【戸】',
+                               'araserareru': 'araserareru',
+                               'takenokonoyouni': 'takenoko no you ni',
+                               '出teiru': 'dete 【出て】 iru',
+                               'no一字': 'no ichiji 【一字】',
+                               'ha記憶kara': 'wa kioku 【記憶】 kara',
+                               'rareta': 'rareta',
+                               '烏no': 'tori 【烏】 no',
+                               'no松': 'no matsu 【松】',
+                               'wo極meru': 'wo kiwameru 【極める】',
+                               'wo飲mu': 'wo nomu 【飲む】',
+                               'ni水': 'ni mizu 【水】',
+                               'shita顔': 'shita kao 【顔】',
+                               '一人': 'hitori 【一人】',
+                               'no至ridesu': 'no itari 【至り】 desu',
+                               'no陣/ジン/wo布ku': 'no jin 【陣】 wo shiku 【布く】',
+                               '羽/ハネ/no': 'hane 【羽】 no',
+                               'tta': 'tta',
+                               'no人tonaru': 'no hito 【人】 to naru',
+                               'kana': 'kana',
+                               'de卸su': 'de orosu 【卸す】',
+                               'no眉': 'no mayu 【眉】',
+                               'no姓/カバネ/': 'no kabane 【姓】',
+                               'wo行u': 'wo okonau 【行う】',
+                               'no性格': 'no seikaku 【性格】',
+                               'ni聞ku': 'ni kiku 【聞く】',
+                               'ganaranai': 'ga naranai',
+                               '鯛no': 'tai 【鯛】 no',
+                               'ni散歩suru': 'ni sanposuru 【散歩する】',
+                               'ni食beru': 'ni taberu 【食べる】',
+                               'na女': 'na onna 【女】',
+                               'yoroshikiwo得ta': 'yoroshiki wo eta 【得た】',
+                               'de見ru': 'de miru 【見る】',
+                               'ni構eru': 'ni kamaeru 【構える】',
+                               '涙wofurutte': 'namida 【涙】 wo furutte',
+                               'wo斬ru': 'wo kiru 【斬る】',
+                               'no勇gaaru': 'no yuu 【勇】 ga aru',
+                               'ni引kkaku': 'ni hikkaku 【引っかく】',
+                               '止muwo得nakereba': 'yamu 【止む】 wo enakereba 【得なければ】',
+                               'no涙wo注gu': 'no namida 【涙】 wo sosogu 【注ぐ】',
+                               'wo全usuru': 'wo mattousuru 【全うする】',
+                               '絶/タ/yu': 'tayu 【絶ゆ】',
+                               '中no紅一点': 'chuu 【中】 no kouitten 【紅一点】',
+                               '眼/me/wo': 'me 【眼】 wo',
+                               '贔屓no': 'hiiki 【贔屓】 no',
+                               'no死(最期)wo遂geru': 'no shi 【死】 (saigo 【最期】) wo togeru 【遂げる】',
+                               'wo願imasu': 'wo negaimasu 【願います】',
+                               'ni押shi寄seru': 'ni oshiyoseru 【押し寄せる】',
+                               'ni走ru': 'ni hashiru 【走る】',
+                               'de暮rasu': 'de kurasu 【暮らす】',
+                               'no武器': 'no buki 【武器】',
+                               'wo加eru': 'wo kuwaeru 【加える】',
+                               'wo張ru': 'wo haru 【張る】',
+                               '吹kaseteyaru': 'fukasete 【吹かせて】 yaru',
+                               'noii': 'no ii',
+                               'nowarui': 'no warui',
+                               'hitori見enai(inai)': 'hitori mienai 【見えない】 (inai)',
+                               '照ruto': 'teru 【照る】 to',
+                               '脱/ヌ/gu': 'nugu 【脱ぐ】',
+                               'hoshiidesune': 'hoshii desu ne',
+                               '急ide(zatto)': 'isoide 【急いで】 (zatto)',
+                               '浴biru': 'abiru 【浴びる】',
+                               'toshite降ru': 'to shite furu 【降る】',
+                               'no飲食': 'no inshoku 【飲食】',
+                               '常/ツネ/ganai': 'tsune 【常】 ga nai',
+                               '屁wo': 'onara 【屁】 wo',
+                               'ni傚u': 'ni narau 【傚う】',
+                               '啼ku': 'naku 【啼く】',
+                               'tomoshinai': 'to mo shinai',
+                               '水no中wo': 'mizu 【水】 no naka 【中】 wo',
+                               '頭wo下geru': 'atama 【頭】 wo sageru 【下げる】',
+                               '跳bu': 'tobu 【跳ぶ】',
+                               'ni驚ku': 'ni odoroku 【驚く】',
+                               'no灯(灯火)': 'no hi 【灯】 (tomoshibi 【灯火】)',
+                               'タバコwo': 'TABAKO 【タバコ】 wo',
+                               '夜wo': 'yoru 【夜】 wo',
+                               'no客tonaru': 'no kyaku 【客】 to naru',
+                               '複製': 'fukusei 【複製】',
+                               '天地ni愧jizu': 'tenchi 【天地】 ni hajizu 【愧じず】',
+                               '天地ni恥zuru所ganai': 'tenchi 【天地】 ni hazuru 【恥ずる】 tokoro 【所】 ga nai',
+                               '裏面ni': 'rimen 【裏面】 ni',
+                               'nomama検束sareru': 'no mama kensokusareru 【検束される】',
+                               'no数': 'no suu 【数】',
+                               'ni別reru': 'ni wakareru 【別れる】',
+                               'to見rarenai[youna]': 'to mirarenai 【見られない】 [you na]',
+                               '足wo': 'ashi 【足】 wo',
+                               'ni足wo': 'ni ashi 【足】 wo',
+                               '[足no]': '[ashi 【足】 no]',
+                               '[足wo]': '[ashi 【足】 wo]',
+                               'no法則': 'no housoku 【法則】',
+                               'ni付suru': 'ni fusuru 【付する】',
+                               'tono': 'to no',
+                               '雨ga絶ezu': 'ame 【雨】 ga taezu 【絶えず】',
+                               '気ga': 'ki 【気】 ga',
+                               'gatsukanai': 'ga tsukanai',
+                               'wo生yashiteiru': 'wo hayashite 【生やして】 iru',
+                               'no原理': 'no genri 【原理】',
+                               '下garu': 'sagaru 【下がる】',
+                               'toshite日月no如shi': 'to shite jitsugetsu 【日月】 no gotoshi 【如し】',
+                               'ni疲reru': 'ni tsukareru 【疲れる】',
+                               'shaberu': 'shaberu',
+                               'wohakatte': 'wo hakatte',
+                               '用ga': 'you 【用】 ga',
+                               'no礼': 'no rei 【礼】',
+                               'douzo御': 'douzo go 【御】',
+                               '下saimasuyou': 'kudasaimasu 【下さいます】 you',
+                               'wo突ku': 'wo tsuku 【突く】',
+                               'demenkowosuru': 'de menko wo suru',
+                               'no閑': 'no kan 【閑】',
+                               'to落chita': 'to ochita 【落ちた】',
+                               'to飛bi込mu': 'to tobikomu 【飛び込む】',
+                               '太tta': 'futotta 【太った】',
+                               'no及bu所denai': 'no oyobu 【及ぶ】 tokoro 【所】 de nai',
+                               '折reru': 'oreru 【折れる】',
+                               'ga見enai': 'ga mienai 【見えない】',
+                               'wosasu': 'wo sasu',
+                               'tte': 'tte',
+                               'eba': 'eba',
+                               '方/koto/naki': 'koto 【方】 naki',
+                               '[to]見ru': '[to] miru 【見る】',
+                               'ni(kara)': 'ni (kara)',
+                               '帽子wo': 'boushi 【帽子】 wo',
+                               'ni被ru': 'ni kaburu 【被る】',
+                               'notsukanu': 'no tsukanu',
+                               'ni寝ru': 'ni neru 【寝る】',
+                               'hagitorareru': 'hagitorareru',
+                               'no混戦': 'no konsen 【混戦】',
+                               'no争i': 'no arasoi 【争い】',
+                               'ni暮rasu': 'ni kurasu 【暮らす】',
+                               'yatte行ku': 'yatte iku 【行く】',
+                               '鰯no': 'iwashi 【鰯】 no',
+                               'no郷/サト/': 'no sato 【郷】',
+                               'wo立teru': 'wo tateru 【立てる】',
+                               'toha': 'to wa',
+                               '人nimeimei': 'hito 【人】 ni meimei',
+                               'no御宿/オヤド/': 'no oyado 【御宿】',
+                               'ni納meru': 'ni osameru 【納める】',
+                               'ni打tsu': 'ni utsu 【打つ】',
+                               'ni撃tsu': 'ni utsu 【撃つ】',
+                               'wo押su': 'wo osu 【押す】',
+                               'no一夜wo過gosu': 'no ichiya 【一夜】 wo sugosu 【過ごす】',
+                               'wo食waseru': 'wo kuwaseru 【食わせる】',
+                               'wo投geru': 'wo nageru 【投げる】',
+                               'gakiku': 'ga kiku',
+                               '燃e上garu': 'moeagaru 【燃え上がる】',
+                               'ano店ha': 'ano mise 【店】 wa',
+                               '煙ga': 'kemuri 【煙】 ga',
+                               '[to]出ru': '[to] deru 【出る】',
+                               'no話de': 'no hanashi 【話】 de',
+                               'ni身wo': 'ni mi 【身】 wo',
+                               '気no': 'ki 【気】 no',
+                               'no幸': 'no sachi 【幸】',
+                               '袴no': 'hakama 【袴】 no',
+                               'wo高kutoru': 'wo takaku 【高く】 toru',
+                               'wo脱gu(脱ideiru)': 'wo nugu 【脱ぐ】 (nuide 【脱いで】 iru)',
+                               '効/コウ/naku': 'kou 【効】 naku',
+                               'woafuru': 'wo afuru',
+                               '八幡/yawata/no': 'yawata 【八幡】 no',
+                               'no大蛇/オロチ/': 'no orochi 【大蛇】',
+                               'ano男ha何事mo': 'ano otoko 【男】 wa nanigoto 【何事】 mo',
+                               'niataru': 'ni ataru',
+                               'mo忘renai': 'mo wasurenai 【忘れない】',
+                               'wo作ru': 'wo tsukuru 【作る】',
+                               'desu(da)': 'desu (da)',
+                               '[御座imasu]': '[gozaimasu 【御座います】]',
+                               'no事de': 'no koto 【事】 de',
+                               'nikakaeru': 'ni kakaeru',
+                               'ni飛ndeyuku': 'ni tonde 【飛んで】 yuku',
+                               'ni払u': 'ni harau 【払う】',
+                               'aru人': 'aru hito 【人】',
+                               'wo漏rasu': 'wo morasu 【漏らす】',
+                               'kono本ha': 'kono hon 【本】 wa',
+                               'no捨小舟/ステコブネ/': 'no sutekobune 【捨小舟】',
+                               '[wo通tte]': '[wo tootte 【通って】]',
+                               'no余地monai': 'no yochi 【余地】 mo nai',
+                               'no机': 'no tsukue 【机】',
+                               'to呼鈴wo鳴rasu': 'to yobirin 【呼鈴】 wo narasu 【鳴らす】',
+                               '人間ha万物': 'ningen 【人間】 wa banbutsu 【万物】',
+                               'no身': 'no mi 【身】',
+                               'wo結bu': 'wo musubu 【結ぶ】',
+                               '震eru': 'furueru 【震える】',
+                               'no紙': 'no kami 【紙】',
+                               'no話shiburi': 'no hanashiburi 【話しぶり】',
+                               'no塔': 'no tou 【塔】',
+                               'no灰/ハイ/': 'no hai 【灰】',
+                               'ni持chi込mu': 'ni mochikomu 【持ち込む】',
+                               '指導教師': 'shidou 【指導】 kyoushi 【教師】',
+                               'kamo': 'ka mo',
+                               'beshi': 'beshi',
+                               '間違tteiru': 'machigatte 【間違って】 iru',
+                               'o出denasai, o出de下sai': 'oide 【お出で】 nasai, oide 【お出で】 kudasai 【下さい】',
+                               '正金銀行': 'shoukin 【正金】 ginkou 【銀行】',
+                               '特別委員会': 'tokubetsu 【特別】 iinkai 【委員会】',
+                               '特殊飲食店街': 'tokushu 【特殊】 inshoku 【飲食】 tengai 【店街】',
+                               'モスリン': 'MOSURIN 【モスリン】',
+                               'タクシ:': 'TAKUSHII 【タクシー】',
+                               'アジ': 'AJI 【アジ】',
+                               '海軍': 'kaigun 【海軍】',
+                               '空軍': 'kuugun 【空軍】',
+                               '陸軍': 'rikugun 【陸軍】',
+                               '原子爆弾': 'genshi 【原子】 bakudan 【爆弾】',
+                               '水素爆弾': 'suiso 【水素】 bakudan 【爆弾】',
+                               '国民党': 'kokumintou 【国民党】',
+                               '共産党': 'kyousantou 【共産党】',
+                               '修正': 'shuusei 【修正】',
+                               '校定': 'koutei 【校定】',
+                               '時間': 'jikan 【時間】',
+                               '空間': 'kuukan 【空間】',
+                               '汽船': 'kisen 【汽船】',
+                               '軍艦': 'gunkan 【軍艦】',
+                               '早稲田': 'waseda 【早稲田】',
+                               '慶応': 'keiou 【慶応】',
+                               '理髪': 'rihatsu 【理髪】',
+                               '美容': 'biyou 【美容】',
+                               '礼儀': 'reigi 【礼儀】',
+                               '音楽': 'ongaku 【音楽】',
+                               '労働組合連合会': 'roudou 【労働】 kumiai 【組合】 rengoukai 【連合会】',
+                               '労働組合連盟': 'roudou 【労働】 kumiai 【組合】 renmei 【連盟】',
+                               'goneru': 'goneru',
+                               '得': 'toku 【得】',
+                               '青馬no節会/セチエ/': 'aouma 【青馬】 no sechie 【節会】',
+                               '安全保障': 'anzen 【安全】 hoshou 【保障】',
+                               '安全保障条約': 'anzen 【安全】 hoshou 【保障】 jouyaku 【条約】',
+                               '言ukoto': 'iu 【言う】 koto',
+                               '医学大学': 'igaku 【医学】 daigaku 【大学】',
+                               '医学博士': 'igaku 【医学】 hakase 【博士】',
+                               '委員会': 'iinkai 【委員会】',
+                               '印度綿花': 'indo 【印度】 menka 【綿花】',
+                               '運転休止': 'unten 【運転】 kyuushi 【休止】',
+                               '英国資本': 'eikoku 【英国】 shihon 【資本】',
+                               'o茶no水大学': 'ochanomizu 【お茶の水】 daigaku 【大学】',
+                               '巡洋艦': "jun'youkan 【巡洋艦】",
+                               '化学繊維': "kagaku 【化学】 sen'i 【繊維】",
+                               '外国語大学': 'gaikokudo 【外国語】 daigaku 【大学】',
+                               '僧伽藍摩': 'sougaranma 【僧伽藍摩】',
+                               '機関銃': 'kikaijuu 【機関銃】',
+                               '多伽羅': 'takara 【多伽羅】',
+                               '旧暦': 'kyuureki 【旧暦】',
+                               '九州大学': 'kyuushuu 【九州】 daigaku 【大学】',
+                               '至急電報': 'shikyuu 【至急】 denpou 【電報】',
+                               '共同漁業権': 'kyoudou 【共同】 gyogyouken 【漁業権】',
+                               '京都大学': 'kyouto 【京都】 daigaku 【大学】',
+                               '機械水雷': 'kikai 【機械】 suirai 【水雷】',
+                               '空中爆撃': 'kuuchuu 【空中】 bakugeki 【爆撃】',
+                               '航空母艦': 'koukuu 【航空】 bokan 【母艦】',
+                               '空中回廊': 'kuuchuu 【空中】 kairou 【回廊】',
+                               '九九no表': 'kuku 【九九】 no hyou 【表】',
+                               '区域行政': 'kuiki 【区域】 gyousei 【行政】',
+                               '軍備拡張': 'gunbi 【軍備】 kakuchou 【拡張】',
+                               '軍事警察': 'gunji 【軍事】 keisatsu 【警察】',
+                               '軍備縮小': 'gunbi 【軍備】 shukushou 【縮小】',
+                               '軽機関銃': 'keikikanjuu 【軽機関銃】',
+                               '軽飛行機': 'keihikouki 【軽飛行機】',
+                               '刑事訴訟': 'keiji 【刑事】 soshou 【訴訟】',
+                               '刑事訴訟法': 'keiji 【刑事】 soshouhou 【訴訟法】',
+                               '結跏趺坐': 'kekkafuza 【結跏趺坐】',
+                               '赤血球沈降速度': 'sekkekkyuu 【赤血球】 chinkou 【沈降】 sokudo 【速度】',
+                               '県会議員': 'kenkai 【県会】 giin 【議員】',
+                               '事件名称索引': 'jiken 【事件】 meishou 【名称】 sakuin 【索引】',
+                               '現物no株式': 'genbutsu 【現物】 no kabushiki 【株式】',
+                               '原子力研究': 'genshiryoku 【原子力】 kenkyuu 【研究】',
+                               '原子力研究所': 'genshiryoku 【原子力】 kenkyuujo 【研究所】',
+                               '現在no住職': 'genzai 【現在】 no juushoku 【住職】',
+                               '現物提供': 'genbutsu 【現物】 teikyou 【提供】',
+                               '公定価格': 'koutei 【公定】 kakaku 【価格】',
+                               '銀行no金': 'ginkou 【銀行】 no kane 【金】',
+                               '興業銀行': 'kougyou 【興業】 ginkou 【銀行】',
+                               '高等工業学校': 'koutou 【高等】 kougyou 【工業】 gakkou 【学校】',
+                               '高等学校生徒': 'koutou 【高等】 gakkou 【学校】 seito 【生徒】',
+                               '高等裁判所': 'koutou 【高等】 saibansho 【裁判所】',
+                               '高等師範学校': 'koutou 【高等】 shihan 【師範】 gakkou 【学校】',
+                               '公債to社債': 'kousai 【公債】 + shasai 【社債】',
+                               '高等商業学校': 'koutou 【高等】 shougyou 【商業】 gakkou 【学校】',
+                               '高等専門学校': 'koutou 【高等】 senmon 【専門】 gakkou 【学校】',
+                               '高等専門学校卒業': 'koutou 【高等】 senmon 【専門】 gakkou 【学校】 sotsugyou 【卒業】',
+                               '工業大学': 'kougyou 【工業】 daigaku 【大学】',
+                               '公家武家': 'kuge 【公家】 + buke 【武家】',
+                               '高等文官': 'koutou 【高等】 bunkan 【文官】',
+                               '高等文官試験': 'koutou 【高等】 bunkan 【文官】 shiken 【試験】',
+                               '国民政府': 'kokumin 【国民】 seifu 【政府】',
+                               '小口当座預金': 'koguchi 【小口】 touza 【当座】 yokin 【預金】',
+                               '国家管理': 'kokka 【国家】 kanri 【管理】',
+                               '国家宗教': 'kokka 【国家】 shuukyou 【宗教】',
+                               '国家地方警察': 'kokka 【国家】 chihou 【地方】 keisatsu 【警察】',
+                               '識見to度量': 'shikiken 【識見】 + doryou 【度量】',
+                               '市会議': 'shikaigi 【市会議】',
+                               '市会議員': 'shikaigiin 【市会議員】',
+                               '市中銀行': 'shichuu 【市中】 ginkou 【銀行】',
+                               '私立大学': 'shiritsu 【私立】 daigaku 【大学】',
+                               '師団長': 'shidanchou 【師団長】',
+                               '輜重部隊': 'shichou 【輜重】 butai 【部隊】',
+                               '執行委員会': 'shikkou 【執行】 iinkai 【委員会】',
+                               '市内電車': 'shinai 【市内】 densha 【電車】',
+                               '支局to分局': 'shikyoku 【支局】 + bunkyoku 【分局】',
+                               '衆議院to参議院': 'shuugiin 【衆議院】 + sangiin 【参議院】',
+                               '秋季闘争': 'shuuki 【秋季】 tousou 【闘争】',
+                               '輸出超過': 'yushutsu 【輸出】 chouka 【超過】',
+                               '主婦連合会': 'shufu 【主婦】 rengoukai 【連合会】',
+                               '春季闘争': 'shunki 【春季】 tousou 【闘争】',
+                               '商業大学': 'shougyou 【商業】 daigaku 【大学】',
+                               '公共職業安定所': 'koukyou 【公共】 shokugyouanteijo 【職業安定所】',
+                               '進学適正検査': 'shingaku 【進学】 tekisei 【適正】 kensa 【検査】',
+                               '自治体警察': 'jichitai 【自治体】 keisatsu 【警察】',
+                               '機関銃部隊': 'kikanjuu 【機関銃】 butai 【部隊】',
+                               '受信報知電報': 'jushin 【受信】 houchi 【報知】 denpou 【電報】',
+                               '純粋系統': 'junsui 【純粋】 keitou 【系統】',
+                               '通常国会': 'tsuujou 【通常】 kokkai 【国会】',
+                               '女子高等師範学校': 'joshi 【女子】 koutou 【高等】 shihan 【師範】 gakkou 【学校】',
+                               '人造絹糸': 'jinzou 【人造】 kenshi 【絹糸】',
+                               '人糞肥料': 'jinpun 【人糞】 hiryou 【肥料】',
+                               '人造肥料': 'jinzou 【人造】 hiryou 【肥料】',
+                               '水上飛行機': 'suijou 【水上】 hikouki 【飛行機】',
+                               '青年訓練': 'seinen 【青年】 kunren 【訓練】',
+                               '政治結社': 'seiji 【政治】 kessha 【結社】',
+                               '生活必需品': 'seikatsu 【生活】 hitsujuuhin 【必需品】',
+                               '生命保険': 'seimei 【生命】 hoken 【保険】',
+                               '世界銀行': 'sekai 【世界】 ginkou 【銀行】',
+                               '戦争犯罪': 'sensou 【戦争】 hanzai 【犯罪】',
+                               '放射線量': 'housha 【放射】 senryou 【線量】',
+                               '早稲田大学': 'waseda 【早稲田】 daigaku 【大学】',
+                               '日本労働総同盟': 'nihon 【日本】 roudou 【労働】 soudoumei 【総同盟】',
+                               '日本労働組合総評議会': 'nihon 【日本】 roudou 【労働】 kumiai 【組合】 souhyou 【総評】 gikai 【議会】',
+                               '短期大学': 'tanki 【短期】 daigaku 【大学】',
+                               'dato言tte': 'da to itte 【言って】',
+                               '堕落幹部': 'daraku 【堕落】 kanbu 【幹部】',
+                               '団体協約': 'dantai 【団体】 kyouyaku 【協約】',
+                               '団体交渉': 'dantai 【団体】 koushou 【交渉】',
+                               '集団地域': 'shuudan 【集団】 chiiki 【地域】',
+                               '地下核爆発停止': 'chika 【地下】 kakubakuhatsu 【核爆発】 teishi 【停止】',
+                               '地方警察': 'chihou 【地方】 keisatsu 【警察】',
+                               '地方検事局': 'chihou 【地方】 kenjikyoku 【検事局】',
+                               '地方裁判所': 'chihou 【地方】 saibansho 【裁判所】',
+                               '中央委員会': 'chuuou 【中央】 iinkai 【委員会】',
+                               '中央委員[会]': 'chuuou 【中央】 iin[kai] 【委員[会]】',
+                               '中国共産党': 'chuugoku 【中国】 kyousantou 【共産党】',
+                               '中央執行委員会': 'chuuou 【中央】 shikkou 【執行】 iinkai 【委員会】',
+                               '中央闘争委員会': 'chuuou 【中央】 tousou 【闘争】 iinkai 【委員会】',
+                               '中央労働委員会': 'chuuou 【中央】 roudou 【労働】 iinkai 【委員会】',
+                               '賃上ge闘争': "chin'age 【賃上げ】 tousou 【闘争】",
+                               '通商産業省': 'tsuushou 【通商】 sangyoushou 【産業省】',
+                               '通商産業大臣': 'tsuushou 【通商】 sangyou 【産業】 daijin 【大臣】',
+                               '帝国大学': 'teikoku 【帝国】 daigaku 【大学】',
+                               '電気分解': 'denki 【電気】 bunkai 【分解】',
+                               '電気機械': 'denki 【電気】 kikai 【機械】',
+                               '電気器具': 'denki 【電気】 kigu 【器具】',
+                               '電気蓄音機': 'denki 【電気】 chikuonki 【蓄音機】',
+                               '電気鉄道': 'denki 【電気】 tetsudou 【鉄道】',
+                               '電気回路': 'denki 【電気】 kairo 【回路】',
+                               '東京大学': 'toukyou 【東京】 daigaku 【大学】',
+                               '特殊銀行': 'tokushu 【特殊】 ginkou 【銀行】',
+                               '特高警察': 'tokkou 【特高】 keisatsu 【警察】',
+                               'to言tte': 'to itte 【言って】',
+                               '都内電車': 'tonai 【都内】 densha 【電車】',
+                               '土木建築': 'doboku 【土木】 kenchiku 【建築】',
+                               'nanakusanosekku【七草no節句】': 'nanakusa 【七草】 no sekku 【節句】',
+                               '生意気': 'namaiki 【生意気】',
+                               '生ビ:ル': 'nama 【生】 BIIRU 【ビール】',
+                               '南無阿弥陀仏/ナムアミダブツ/': 'namu 【南無】 amidabutsu 【阿弥陀仏】',
+                               '日本銀行': 'nihon 【日本】 ginkou 【銀行】',
+                               '日本大学': 'nihon 【日本】 daigaku 【大学】',
+                               '日本共産党': 'nihon 【日本】 kyousantou 【共産党】',
+                               '日本航空': 'nihon 【日本】 koukuu 【航空】',
+                               '輸入超過': 'yunyuu 【輸入】 chouka 【超過】',
+                               '農業協同組合': 'nougyou 【農業】 kyoudou 【協同】 kumiai 【組合】',
+                               '四国八十八個所': 'shikoku 【四国】 hachijuuhakkasho 【八十八個所】',
+                               '発売禁止': 'hatsubai 【発売】 kinshi 【禁止】',
+                               '万国博覧会': 'bankoku 【万国】 hakurankai 【博覧会】',
+                               '風力程度': 'fuuryoku 【風力】 teido 【程度】',
+                               '府会議員': 'fukaigiin 【府会議員】',
+                               '婦人警官': 'fujin 【婦人】 keikan 【警官】',
+                               '婦人選挙権': 'fujin 【婦人】 senkyoken 【選挙権】',
+                               '普通選挙': 'futsuu 【普通】 senkyo 【選挙】',
+                               '物資動員': 'busshi 【物資】 douin 【動員】',
+                               '文部省検定試験': 'monbushou 【文部省】 kentei 【検定】 shiken 【試験】',
+                               '文学博士': 'bungaku 【文学】 hakase 【博士】',
+                               '砲兵to工兵': 'houhei 【砲兵】 + kouhei 【工兵】',
+                               '貿易手形': 'boueki 【貿易】 tegata 【手形】',
+                               '南満鉄道': 'nanman 【南満】 tetsudou 【鉄道】',
+                               '居留民団': 'kyoryuumindan 【居留民団】',
+                               '無線電信': 'musen 【無線】 denshin 【電信】',
+                               '同盟休校': 'doumei 【同盟】 kyuukou 【休校】',
+                               '明治大学': 'meiji 【明治】 daigaku 【大学】',
+                               '名誉to利益': 'meiyo 【名誉】 + rieki 【利益】',
+                               '落書no一首': 'rakusho 【落書】 no isshu 【一首】',
+                               '陸軍大学校': 'rikugun 【陸軍】 daigakkou 【大学校】',
+                               '流行性感冒': 'ryuukousei 【流行性】 kanbou 【感冒】',
+                               '臨時急行': 'rinji 【臨時】 kyuukou 【急行】',
+                               '労働組合': 'roudou 【労働】 kumiai 【組合】',
+                               'ブランケット': 'BURANKETTO 【ブランケット】',
+                               'サリチル酸・ソ:ダ': 'SARICHIRUsan SOUDA 【サリチル酸・ソーダ】',
+                               'ストライキ': 'SUTORAIKI 【ストライキ】',
+                               'ソヴィエト共産党': 'SOVIETO 【ソヴィエト】 kyousantou 【共産党】',
+                               'クレ:プ・デシン': 'KUREEPU DESHIN 【クレープ・デシン】',
+                               'ミステ:ク': 'MISUTEEKU 【ミステーク】',
+                               'ラグビ': 'RAGUBI 【ラグビ】',
+                               '入国管理事務所': 'nyuukoku 【入国】 kanri 【管理】 jimusho 【事務所】',
+                               'nihiku': 'ni hiku',
+                               'ni置ku': 'ni oku 【置く】',
+                               '頰wo': 'hoho 【頰】 wo',
+                               '頰ga': 'hoho 【頰】 ga',
+                               'gatorenai': 'ga torenai',
+                               'ni取rareru': 'ni torareru 【取られる】',
+                               'aite': 'aite',
+                               '息wo': 'iki 【息】 wo',
+                               'no目wo抜ku[youna事wosuru]': 'no 【目】 wo nuku 【抜く】 [you na koto 【事】 wo suru]',
+                               'no煙': 'no kemuri 【煙】',
+                               'no命': 'no inochi 【命】',
+                               'no望miwo抱ku': 'no nozomi 【望み】 wo idaku 【抱く】',
+                               'no労/ロウ/': 'no rou 【労】',
+                               'ni過ginai': 'ni suginai 【過ぎない】',
+                               'narazu': 'narazu',
+                               '[nokoto]': '[no koto]',
+                               'ga尽kita': 'ga tsukita 【尽きた】',
+                               'na奴da': 'na yatsu 【奴】 da',
+                               '言tteiru': 'itte 【言って】 iru',
+                               'no魚': 'no sakana 【魚】',
+                               'no料理': 'no ryouri 【料理】',
+                               'ni掛keru': 'ni kakeru 【掛ける】',
+                               '心wo': 'kokoro 【心】 wo',
+                               'nikakeru': 'ni kakeru',
+                               'ni止maru': 'ni tomaru 【止まる】',
+                               'ni過ginu': 'ni suginu 【過ぎぬ】',
+                               'ni嵌ru': 'ni hamaru 【嵌る】',
+                               '第一ni': 'daiichi 【第一】 ni',
+                               'to書itearu': 'to kaite 【書いて】 aru',
+                               'no偉業(事業)': 'no igyou 【偉業】 (jigyou 【事業】)',
+                               'no力': 'no chikara 【力】',
+                               'kachin': 'kachin',
+                               '晴re上garu': 'hareagaru 【晴れ上がる】',
+                               '揚geru': 'ageru 【揚げる】',
+                               '日ga照tteiru': 'me 【日】 ga tette 【照って】 iru',
+                               'ni怒ru': 'ni okoru 【怒る】',
+                               '三': 'san 【三】',
+                               'iu音': 'iu oto 【音】',
+                               'to飲mi込mu': 'to nomikomu 【飲み込む】',
+                               'to嚙mi付ku': 'to kamitsuku 【嚙み付く】',
+                               '騒gu': 'sawagu 【騒ぐ】',
+                               'to音gasuru': 'to oto 【音】 ga suru',
+                               '嚙mu': 'kamu 【嚙む】',
+                               '鳴rasu': 'narasu 【鳴らす】',
+                               'no字': 'no ji 【字】',
+                               'no祝': 'no iwai 【祝】',
+                               'nonakiwo得nai': 'no naki wo enai 【得ない】',
+                               'wo現wasu': 'wo arawasu 【現わす】',
+                               'wo没suru': 'wo bossuru 【没する】',
+                               'ga高i': 'ga takai 【高い】',
+                               '気儘na': 'kimama 【気儘】 na',
+                               'ni詰matteiru': 'ni tsumatte 【詰まって】 iru',
+                               'no字no祝/イワイ/': 'no ji 【字】 no iwai 【祝】',
+                               'ga折reru': 'ga oreru 【折れる】',
+                               'no折reru': 'no oreru 【折れる】',
+                               '言waseru': 'iwaseru 【言わせる】',
+                               '参ru': 'mairu 【参いる】',
+                               '鳴ru音': 'naru 【鳴る】 oto 【音】',
+                               'to言u音': 'to iu 【言う】 oto 【音】',
+                               'to開ku': 'to hiraku 【開く】',
+                               '疲reru': 'tsukareru 【疲れる】',
+                               '汗deカラ:ga': 'ase 【汗】 de KARAA 【カラー】 ga',
+                               '目ga': 'me 【目】 ga',
+                               '煮e立tsu': 'nietatsu 【煮え立つ】',
+                               '空no色': 'sora 【空】 no iro 【色】',
+                               '白百合/シラユリ/': 'shirayuri 【白百合】',
+                               '嗅gu': 'kagu 【嗅ぐ】',
+                               '引ku': 'hiku 【引く】',
+                               '寝ru': 'neru 【寝る】',
+                               '腹ga': 'hara 【腹】 ga',
+                               'mo出nai': 'mo denai 【出ない】',
+                               'mo出naiyounisuru': 'mo denai 【出ない】 you ni suru',
+                               '回ru': 'mawaru 【回る】',
+                               '巻ku': 'maku 【巻く】',
+                               '巻kinisuru': 'maki 【巻き】 ni suru',
+                               'ga付ku': 'ga tsuku 【付く】',
+                               'no勝負woyaru': 'no shoubu 【勝負】 wo yaru',
+                               'wo食wasu': 'wo kuwasu 【食わす】',
+                               'wo食wasaseru': 'wo kuwasaseru 【食わさせる】',
+                               'no気': 'no ki 【気】',
+                               'no気wo養u': 'no ki 【気】 wo yashinau 【養う】',
+                               'no生活': 'no seikatsu 【生活】',
+                               'wo持/ジ/su': 'wo jisu 【持す】',
+                               'suruwo': 'suru wo',
+                               '転geru': 'korogeru 【転げる】',
+                               'ano人ha': 'ano hito 【人】 wa',
+                               'tofutotteiru': 'to futotte iru',
+                               '狐ga': 'kitsune 【狐】 ga',
+                               'to咳wosuru': 'to seki 【咳】 wo suru',
+                               '雪ga': 'yuki 【雪】 ga',
+                               'to降ru': 'to furu 【降る】',
+                               'to流reru': 'to nagareru 【流れる】',
+                               'toshite尽kinai': 'to shite tsukinai 【尽きない】',
+                               'to通ru': 'to tooru 【通る】',
+                               'toiu彼no音': 'to iu kare 【彼】 no oto 【音】',
+                               'toiu音': 'to iu oto 【音】',
+                               'no阿蒙/アモウ/dearu': 'no amou 【阿蒙】 dearu',
+                               '酔iwo': 'yoi 【酔い】 wo',
+                               '迷i(迷夢)wo': 'mayoi 【迷い】 (meimu 【迷夢】) wo',
+                               '[目ga]': '[me 【目】 ga]',
+                               '目no': 'me 【目】 no',
+                               'youna美人': 'you na bijin 【美人】',
+                               '酔iga': 'yoi 【酔い】 ga',
+                               '砂wo': 'suna 【砂】 wo',
+                               '踏mu': 'fumu 【踏む】',
+                               '降rino雨': 'furi 【降り】 no ame 【雨】',
+                               'no花': 'no hana 【花】',
+                               'no眺megaaru': 'no nagame 【眺め】 ga aru',
+                               '痛mu': 'itamu 【痛む】',
+                               'no旅': 'no tabi 【旅】',
+                               'no旅ni上ru': 'no tabi 【旅】 ni noboru 【上る】',
+                               'no山': 'no yama 【山】',
+                               'no人qi': 'no hitobito 【人々】',
+                               '体wo': 'karada 【体】 wo',
+                               '一致shite': 'icchishite 【一致して】',
+                               'ni掌握suru': 'ni shouakusuru 【掌握する】',
+                               'wo脱suru': 'wo dassuru 【脱する】',
+                               '神mo': 'kami 【神】 mo',
+                               'are': 'are',
+                               'ni濡reru': 'ni nureru 【濡れる】',
+                               '雨ga': 'ame 【雨】 ga',
+                               '降ru': 'furu 【降る】',
+                               'shita目': 'shita me 【目】',
+                               'shita髯': 'shita hige 【髯】',
+                               'no見ru所': 'no miru 【見る】 tokoro 【所】',
+                               'soreha': 'sore wa',
+                               'no一失': 'no isshitsu 【一失】',
+                               'no弁/ベン/': 'no ben 【弁】',
+                               'no弁wo振u': 'no ben 【弁】 wo furuu 【振う】',
+                               'taru大海': 'taru taikai 【大海】',
+                               'to暮rete行ku': 'to kurete 【暮れて】 iku 【行く】',
+                               'ni載seru': 'ni noseru 【載せる】',
+                               '耳wo': 'mimi 【耳】 wo',
+                               'wo食tte殺sareru': 'wo kutte 【食って】 korosareru 【殺される】',
+                               'abunai': 'abunai',
+                               '誰': 'dare 【誰】',
+                               '来tanoka？': 'kita 【来た】 no ka?',
+                               'ni出su': 'ni dasu 【出す】',
+                               'de売ru': 'de uru 【売る】',
+                               'ni近i': 'ni chikai 【近い】',
+                               'wo得/エ/ru': 'wo eru 【得る】',
+                               'jiisantobaasan': 'jii-san to baa-san',
+                               'de寝ru': 'de neru 【寝る】',
+                               '世間知razuno': 'seken 【世間】 shirazu 【知らず】 no',
+                               'wo憚ru': 'wo habakaru 【憚る】',
+                               'wo許sanai': 'wo yurusanai 【許さない】',
+                               'no一生wo送ru': 'no issei 【一生】 wo okuru 【送る】',
+                               'no志士': 'no shishi 【志士】',
+                               'no悪i戸': 'no warui 【悪い】 to 【戸】',
+                               '上kara水ga': 'ue 【上】 kara mizu 【水】 ga',
+                               '汗wo': 'ase 【汗】 wo',
+                               '流shiteiru': 'nagashite 【流して】 iru',
+                               'wo吹ku': 'wo fuku 【吹く】',
+                               'wo吹ku人': 'wo fuku 【吹く】 hito 【人】',
+                               'no交ri(契ri)': 'no majiri 【交り】 (chigiri 【契り】)',
+                               'to刺su': 'to sasu 【刺す】',
+                               'to痛mu': 'to itamu 【痛む】',
+                               'to啼ku': 'to naku 【啼く】',
+                               '無用no': 'muyou 【無用】 no',
+                               '視suru': 'shisuru 【視する】',
+                               'hasami切ru': 'hasami kiru 【切る】',
+                               '切ru': 'kiru 【切る】',
+                               'to立tsu': 'to tatsu 【立つ】',
+                               '犬ga': 'inu 【犬】 ga',
+                               '今月ha': 'kongetsu 【今月】 wa',
+                               '嘘wo': 'uso 【嘘】 wo',
+                               '喋beru': 'shaberu 【喋べる】',
+                               '返答suru': 'hentousuru 【返答する】',
+                               '云wazuni': 'iwazu 【云わず】 ni',
+                               '言una': 'iu 【言う】 na',
+                               '茶no': 'cha 【茶】 no',
+                               '繭no': 'mayu 【繭】 no',
+                               '一番ninaru': 'ichiban 【一番】 ni naru',
+                               '一着': 'icchaku 【一着】',
+                               'ni暮reru': 'ni kureru 【暮れる】',
+                               'ni暮resaseru': 'ni kuresaseru 【暮れさせる】',
+                               'monaiuso': 'mo nai uso',
+                               '[no友]': '[no tomo 【友】]',
+                               '言wazuni': 'iwazu 【言わず】 ni',
+                               '言tte承諾shinai': 'itte 【言って】 shoudakushinai 【承諾しない】',
+                               '腰wo下rosu': 'koshi 【腰】 wo orosu 【下ろす】',
+                               '相場ga': 'souba 【相場】 ga',
+                               '下gatta': 'sagatta 【下がった】',
+                               '胸wo': 'mune 【胸】 wo',
+                               '衝ku': 'tsuku 【衝く】',
+                               'wo抜kareru': 'wo nukareru 【抜かれる】',
+                               'no魚wo漏rasu': 'no sakana 【魚】 wo morasu 【漏らす】',
+                               '顔woshite': 'kao 【顔】 wo shite',
+                               '顔de': 'kao 【顔】 de',
+                               'ni漂u': 'ni tadayou 【漂う】',
+                               'wokaikuguru': 'wo kaikuguru',
+                               '行kanai': 'ikanai 【行かない】',
+                               '動kenai': 'ugokenai 【動けない】',
+                               'ga継genai': 'ga tsugenai 【継げない】',
+                               'wo継genakusuru': 'wo tsugenaku 【継げなく】 suru',
+                               'mo出naiyounisuru': 'mo denai 【出ない】 you ni suru',
+                               'kokoha': 'koko wa',
+                               'noyoi床': 'no yoi yuka 【床】',
+                               'no良i靴': 'no ii 【良い】 kutsu 【靴】',
+                               'no一': 'no ichi 【一】',
+                               '打込mu刀wo': 'uchikomu 【打込む】 yaiba 【刀】 wo',
+                               '受ke止meru': 'uketomeru 【受け止める】',
+                               '切ritsukeru': 'kiritsukeru 【切りつける】',
+                               'desuka': 'desu ka',
+                               '失礼desuga': 'shitsurei 【失礼】 desu ga',
+                               'doumo': 'doumo',
+                               'desuga': 'desu ga',
+                               'wo憚ru事gara': 'wo habakaru 【憚る】 kotogara 【事がら】',
+                               '空ni': 'sora 【空】 ni',
+                               '[no笛]': '[no fue 【笛】]',
+                               'wo吹ku': 'wo fuku 【吹く】',
+                               'no策': 'no saku 【策】',
+                               '敵軍ni': 'tekigun 【敵軍】 ni',
+                               'wo放tsu': 'wo hanatsu 【放つ】',
+                               '苦肉no計': 'kuniku 【苦肉】 no kei 【計】',
+                               '息wokirashite': 'iki 【息】 wo kirashite',
+                               'no縄': 'no nawa 【縄】',
+                               'nitsuku': 'ni tsuku',
+                               'ikura言ttemo': 'ikura itte 【言って】 mo',
+                               'ni聞ki流su': 'ni kikinagasu 【聞き流す】',
+                               '[to]ドアwo締meru': '[to] DOA 【ドア】 wo shimeru 【締める】',
+                               '水ni': 'mizu 【水】 ni',
+                               '[to]落chiru': '[to] ochiru 【落ちる】',
+                               'wo合waseru': 'wo awaseru 【合わせる】',
+                               '撒ku': 'maku 【撒く】',
+                               '仕事wo': 'shigoto 【仕事】 wo',
+                               'ni通jiteiru人': 'ni tsuujite 【通じて】 iru hito 【人】',
+                               'no気焔wo上geru': 'no kien 【気焔】 wo ageru 【上げる】',
+                               '波瀾': 'haran 【波瀾】',
+                               'datta時代': 'datta jidai 【時代】',
+                               'no位ni上garu': 'no i 【位】 ni agaru 【上がる】',
+                               'no君/キミ/': 'no kimi 【君】',
+                               '食beru': 'taberu 【食べる】',
+                               '吹kasu': 'fukasu 【吹かす】',
+                               'to食beru': 'to taberu 【食べる】',
+                               'to開ite': 'to aite 【開いて】',
+                               '帆ga風ni': 'ho 【帆】 ga kaze 【風】 ni',
+                               '翼wo': 'tsubasa 【翼】 wo',
+                               '雨no': 'ame 【雨】 no',
+                               'iu音gasuru': 'iu oto 【音】 ga suru',
+                               'hokoriwo': 'hokori wo',
+                               '払u': 'harau 【払う】',
+                               '打tsu': 'utsu 【打つ】',
+                               '指de': 'yubi 【指】 de',
+                               'hajiku': 'hajiku',
+                               '小銃no': 'shoujuu 【小銃】 no',
+                               '手wo': 'te 【手】 wo',
+                               '叩ku': 'tataku 【叩く】',
+                               '嚙mitsuku': 'kamitsuku 【嚙みつく】',
+                               'shita目': 'shita me 【目】',
+                               'akeru': 'akeru',
+                               '刀wo': 'yaiba 【刀】 wo',
+                               'sayani納meru': 'saya ni osameru 【納める】',
+                               '雨': 'ame 【雨】',
+                               '木no葉ga': 'konoha 【木の葉】 ga',
+                               '散tta': 'chitta 【散った】',
+                               'kono部屋ha': 'kono heya 【部屋】 wa',
+                               'no好i': 'no ii 【好い】',
+                               'wo取tta女': 'wo totta 【取】 onna 【女】',
+                               'wo命zuru': 'wo meizuru 【命ずる】',
+                               'wo願u': 'wo negau 【願う】',
+                               'ga好i': 'ga ii 【好い】',
+                               '鳴ru音': 'naru 【鳴る】 oto 【音】',
+                               '本wo閉jiru': 'hon 【本】 wo tojiru 【閉じる】',
+                               'ni濡reru': 'ni nureru 【濡れる】',
+                               '汗wokaku': 'ase 【汗】 wo kaku',
+                               'シャツga汗de': 'SHATSU 【シャツ】 ga ase 【汗】 de',
+                               '裂ku': 'saku 【裂く】',
+                               '縫目wo': 'nuime 【縫目】 wo',
+                               '解ku': 'toku 【解く】',
+                               'to震動suru': 'to shindousuru 【震動する】',
+                               '往復': 'oufuku 【往復】',
+                               '動ku': 'ugoku 【動く】',
+                               '石wo打tsu': 'ishi 【石】 wo utsu 【打つ】',
+                               'muchide打tsu': 'muchi de utsu 【打つ】',
+                               'no仇/アダ/': 'no ada 【仇】',
+                               'no恨miwoidaku': 'no urami 【恨み】 wo idaku',
+                               'no態度wo持suru(執ru)': 'no taido 【態度】 wo jisuru 【持する】 (toru 【執る】)',
+                               'no間柄ninaru': 'no aidagara 【間柄】 ni naru',
+                               '思i切ru': 'omoikiru 【思い切る】',
+                               'to手wo切ru': 'to te 【手】 wo kiru 【切る】',
+                               '柔kakute': 'yawarakakute 【柔かくて】',
+                               'ha頭ga': 'wa atama 【頭】 ga',
+                               '立chi上garu': 'tachiagaru 【立ち上がる】',
+                               'ha足ga': 'wa ashi 【足】 ga',
+                               'no雨': 'no ame 【雨】',
+                               'ni降ru': 'ni furu 【降る】',
+                               '香気': 'kouki',
+                               '臭気': 'shuuki 【臭気】',
+                               '鼻wotsuku': 'hana 【鼻】 wo tsuku',
+                               'tsutanaku死nu': 'tsutanaku shinu 【死ぬ】',
+                               '云u': 'iu 【云う】',
+                               '云u人': 'iu 【云う】 hito 【人】',
+                               '煮eru': 'nieru 【煮える】',
+                               'no間ni': 'no ma 【間】 ni',
+                               'no間ni馳駆suru': 'no ma 【間】 ni chikusuru 【馳駆する】',
+                               'taru小才子': 'taru kozaishi 【小才子】',
+                               'toshite風ni翻ru': 'to shite kaze 【風】 ni hirugaeru 【翻る】',
+                               'to坐ru': 'to suwaru 【坐る】',
+                               'totsuku': 'to tsuku',
+                               'o腹ga': 'onaka 【お腹】 ga',
+                               'o辞儀wosuru': 'ojigi 【お辞儀】 wo suru',
+                               'to凹mu': 'to hekomu 【凹む】',
+                               '坐ru': 'suwaru 【坐る】',
+                               '切手wo': 'kitte 【切手】 wo',
+                               '張ru':' haru 【張る】',
+                               'tonameru': 'to nameru',
+                               'to舌wo出su': 'to shita 【舌】 wo dasu 【出す】',
+                               'to平rageru': 'to tairageru 【平らげる】',
+                               'to食beru': 'to taberu 【食べる】',
+                               'shitai': 'shitai',
+                               '言itai': 'iitai 【言いたい】',
+                               'nokotowo言u': 'no koto wo iu 【言う】',
+                               '食i': 'kui 【食い】',
+                               'ni食u': 'ni kuu 【食う】',
+                               'no体/テイ/de': 'no tei 【体】 de',
+                               'makkani顔wo': 'makka ni kao 【顔】 wo',
+                               'sete': 'sete',
+                               '体中ga': 'karadajuu 【体中】 ga',
+                               'ni陣取ru': 'ni jindoru 【陣取る】',
+                               'wo下garu': 'wo sagaru 【下がる】',
+                               'no勇': 'no yuu 【勇】',
+                               '湧ki出ru': 'wakideru 【湧き出る】',
+                               '噛ru': 'kajiru 【噛る】',
+                               '掻ku': 'kaku 【掻く】',
+                               '本wo傍ni': 'hon 【本】 wo soba 【傍】 ni',
+                               '投geru': 'nageru 【投げる】',
+                               'tonaguru': 'to naguru',
+                               'to明ku': 'to aku 【明く】',
+                               '指no節wo': 'yubi 【指】 no fushi 【節】 wo',
+                               '滴ru': 'shitataru 【滴る】',
+                               '汽車ga': 'kisha 【汽車】 ga',
+                               '煙wo吐kinagara停車場wo出ta':
+                                   'kemuri 【煙】 wo hakinagara 【吐きながら】 teishajou 【停車場】 wo deta 【出た】',
+                               '湯気no出teiruホット・ケ:キ': 'yuge 【湯気】 no dete 【出て】 iru HOTTO KEEKI 【ホット・ケーキ】',
+                               'to一粒雨gaatatta': 'to hitotsubu 【一粒】 ame 【雨】 ga atatta',
+                               'to星ga一tsu残tteiru': 'to hoshi 【星】 ga hitotsu 【一つ】 nokotte 【残って】 iru',
+                               '爪de': 'tsume 【爪】 de',
+                               'wohikkaku': 'wo hikkaku',
+                               '涙wo': 'namida 【涙】 wo',
+                               'kobosu': 'kobosu',
+                               '砕keru': 'kudakeru 【砕ける】',
+                               'toコルクwo抜ku': 'to KORUKU 【コルク】 wo nuku 【抜く】',
+                               'to肩wo叩ku': 'to kata 【肩】 wo tataku 【叩く】',
+                               'to投geteyaru': 'to nagete 【投げて】 yaru',
+                               'to断ru': 'to kotowaru 【断る】',
+                               '花火ga上gatta': 'hanabi 【花火】 ga agatta 【上がった】',
+                               '手wo鳴rasu': 'te 【手】 wo narasu 【鳴らす】',
+                               '怒ru': 'okoru 【怒る】',
+                               'ga差shita': 'ga sashita 【差した】',
+                               'no海': 'no umi 【海】',
+                               'no手': 'no te 【手】',
+                               'woyokeru': 'wo yokeru',
+                               '目ga': 'me 【目】 ga',
+                               'youna高sa': 'you na takasa 【高さ】',
+                               'renai': 'renai',
+                               '肥eteiru': 'koete 【肥えて】 iru',
+                               '事dehanai': 'koto 【事】 de wa nai',
+                               '何ka': 'nani 【何】 ka',
+                               '事gaaruka': 'koto 【事】 ga aru ka',
+                               '弥陀/ミダ/no': 'mida 【弥陀】 no',
+                               '六字no': 'rokuji 【六字】 no',
+                               '起ki上garu': 'okiagaru 【起き上がる】',
+                               '肥eta': 'koeta 【肥えた】',
+                               'shiyoutoiu気ga': 'shiyou to iu ki 【気】 ga',
+                               '[to]起ru': '[to] okoru 【起る】',
+                               '病人no熱気de': 'byounin 【病人】 no netsuke 【熱気】 de',
+                               '[気ga]': '[ki 【気】 ga]',
+                               'wo見ru': 'wo miru 【見る】',
+                               'ni捧geru': 'ni sasageru 【捧げる】',
+                               '音gashite倒reru': 'oto 【音】 ga shite taoreru 【倒れる】',
+                               '[to]云u': '[to] iu 【云う】',
+                               '[to]動ku': '[to] ugoku 【動く】',
+                               'wotsukeru': 'wo tsukeru',
+                               'wotsukerutameni言u': 'wo tsukeru tame ni iu 【言う】',
+                               'ga付ku': 'ga tsuku 【付く】',
+                               '付ite以来': 'tsuite 【付いて】 irai 【以来】',
+                               'notsukanai内ni': 'no tsukanai uchi 【内】 ni',
+                               'wo食wasu': 'wo kuwasu 【食わす】',
+                               'suruto': 'suru to',
+                               'no縁/エン/': 'no en 【縁】',
+                               'sonnakotohanai': 'sonna koto wa nai',
+                               '頼mu': 'tanomu 【頼む】',
+                               'wo入reru': 'wo ireru 【入れる】',
+                               'ga出ta': 'ga deta 【出た】',
+                               'no利ku': 'no kiku 【利く】',
+                               'dehakkiritoshinai': 'de hakkiri to shinai',
+                               'wo得ru': 'wo eru 【得る】',
+                               'ni入ri易/イリヤス/i': 'ni iriyasui 【入り易い】',
+                               'ni入rinikui': 'ni irinikui 【入りにくい】',
+                               'mo違wanai': 'mo chigawanai 【違がわない】',
+                               '張tta目': 'hatta 【張った】 me 【目】',
+                               'shita態度': 'shita taido 【態度】',
+                               '寒暖計': 'kaidankei 【寒暖計】',
+                               'no松/マツ/': 'no matsu 【松】',
+                               'no契/チギ/ri': 'no chigiri 【契り】',
+                               '流reru': 'nagareru 【流れる】',
+                               '引掻kku': 'hikkaku 【引っ掻く】',
+                               'sonnani': 'sonna ni',
+                               'no物': 'no mono 【物】',
+                               '事件wo劇ni': 'jiken 【事件】 wo geki 【劇】 ni',
+                               '後wo': 'ato 【後】 wo',
+                               '辞書wo': 'jisho 【辞書】 wo',
+                               '堪eru': 'taeru 【堪える】',
+                               '我慢suru': 'gamansuru 【我慢する】',
+                               '見詰meru': 'mitsumeru 【見詰める】',
+                               '木': 'ki 【木】',
+                               'to腰wo下rosu': 'to koshi 【腰】 wo orosu 【下ろす】',
+                               '物価ga': 'bukka 【物価】 ga',
+                               '上gatteiru': 'agatte 【上がって】 iru',
+                               '売reru': 'ureru 【売れる】',
+                               '質問suru': 'shitsumonsuru 【質問する】',
+                               '湯wo': 'yu 【湯】 wo',
+                               '沸kasu': 'wakasu 【沸かす】',
+                               '美shii': 'utsukushii 【美しい】',
+                               '君、soudarou': 'kimi 【君】, sou darou',
+                               'ga如shi(如kudearu)': 'ga gotoshi 【如し】 (gotoku 【如く】 de aru)',
+                               'youni': 'you ni',
+                               'naranu真実': 'naranu shinjitsu 【真実】',
+                               'gadekinai': 'ga dekinai',
+                               '梅雨ni': 'tsuyu 【梅雨】 ni',
+                               '今月ni': 'kongetsu 【今月】 ni',
+                               '店wo': 'mise 【店】 wo',
+                               '世帯wo': 'setai 【世帯】 wo',
+                               'ga問題da': 'ga mondai 【問題】 da',
+                               '祖先no霊wo': 'sosen 【祖先】 no rei 【霊】 wo',
+                               '祖先wo': 'sosen 【祖先】 wo',
+                               'mohaya五時wo': 'mohaya goji 【五時】 wo',
+                               'ni合u': 'ni au 【合う】',
+                               'woyokusuru': 'wo yoku suru',
+                               '槍(太刀)wo': 'yari 【槍】 (tachi 【太刀】) wo',
+                               'shigoku': 'shigoku',
+                               'ni刈ru': 'ni karu 【刈る】',
+                               'ni接suru': 'ni sessuru 【接する】',
+                               '耳ga': 'mimi 【耳】 ga',
+                               'iru': 'iru',
+                               'タバコwo吹kasu': 'TABAKO 【タバコ】 wo fukasu 【吹かす】'}
+    _max_eid: WarodaiEid
+
+    def _normalize_kana(self, string: str) -> str:
+        if self._transliterate_collocations:
+            return self._normalizer[_hiragana_to_latin(string)]
+        return string
+
+    def __init__(self, fname: str, transliterate_collocations: bool = True, show_progress: bool = True):
+        self._transliterate_collocations = transliterate_collocations
+
+        self._entries, temp_entries = self._load_db(fname, show_progress)
+
+        self._max_eid = max([WarodaiEid(e.eid) for e in self._entries if e.eid.startswith('009')])
+
+        self._entries.append(WarodaiEntry(eid=self._max_eid.inc(), reading=['つく'], lexeme=['尽く'], translation={},
+                                          references={'1': [
+                                              WarodaiReference(meaning_number=['-1'], eid='008-04-11',
+                                                               mode='письменная форма гл.',
+                                                               verified=True, usable=True)]}))
+        self._entries[self._get_entry_index_by_eid('003-19-23')].references['1'][0].eid = str(self._max_eid)
+        self._entries.append(WarodaiEntry(eid=self._max_eid.inc(), reading=['ざいく'], lexeme=['細工'],
+                                          translation={
+                                              '1': ['《как 2-й компонент сложн. сл.》 [мелкие] изделия, поделки']},
+                                          references={}))
+
+        self._extend_database(temp_entries)
+
+        self._resolve_references(show_progress)
+
+    def _extend_database(self, temp_entries: [WarodaiEntry], show_progress: bool = True):
+        entries_to_add = []
+        custom_reading = {'尼さん': ['あまさん'],
+                          'うっちゃって置く': ['うっちゃっておく'],
+                          'いみじき': ['いみじき'],
+                          'いざという時は親知らず子知らず': ['いざというときはおやしらずこしらず'],
+                          '辞世の歌': ['じせいのうた'],
+                          '次席の人': ['じせきのひと'],
+                          '自尊の念': ['じそんのねん'],
+                          '其限': ['それきり', 'それっきり'],
+                          '取りつ置きつ': ['とりつおきつ'],
+                          'なおりあい': ['なおりあい'],
+                          '無くする': ['なくする'],
+                          '失くする': ['なくする'],
+                          '亡くする': ['なくする'],
+                          'ねんねえ': ['ねんねえ'],
+                          '不惑の年': ['ふわくのとし'],
+                          '放っておく': ['ほうっておく'],
+                          '骨を折る': ['ほねをおる'],
+                          '持たせてやる': ['もたせてやる'],
+                          'エデンの国': ['えでんのくに']}
+        for entry in tqdm(temp_entries,
+                          desc="[Warodai] Expanding word database".ljust(34),
+                          disable=not show_progress):
+            likely_duplicate = [e for e in entries_to_add if sorted(e.lexeme) == sorted(entry.lexeme) and
+                                sorted(e.reading) == sorted(entry.reading)]
+            if likely_duplicate:
+                dup_id = entries_to_add.index(likely_duplicate[0])
+                for tr_number in entry.translation:
+                    entries_to_add[dup_id].translation.setdefault(tr_number, []).extend(entry.translation[tr_number])
+                for ref_number in entry.references:
+                    entries_to_add[dup_id].references.setdefault(ref_number, []).extend(entry.references[ref_number])
+            else:
+                entries_to_add.append(entry)
+                entries_to_add[-1].eid = self._max_eid.inc()
+                if not entries_to_add[-1].reading:
+                    entries_to_add[-1].reading = custom_reading[entries_to_add[-1].lexeme[0]]
+
+        self._entries.extend(entries_to_add)
+
+    def _resolve_references(self, show_progress: bool = True):
+        ids_to_delete = []
+
+        for i, entry in tqdm(list(enumerate(self._entries)),
+                             desc="[Warodai] Validating references".ljust(34),
+                             disable=not show_progress):
+            for ref_id in entry.references:
+                for j, ref in enumerate(entry.references[ref_id]):
+                    targ_entry = self._get_entry_by_eid(ref.eid)
+                    if targ_entry is None:
+                        self._entries[i].references[ref_id][j].usable = False
+                    elif ref.meaning_number == ['-1']:
+                        if not list(targ_entry.translation.keys()) + list(
+                                self._get_entry_by_eid(ref.eid).references.keys()):
+                            self._entries[i].references[ref_id][j].usable = False
+                    else:
+                        for m_n in ref.meaning_number:
+                            if m_n not in list(targ_entry.translation.keys()) + list(targ_entry.references.keys()):
+                                self._entries[i].references[ref_id][j].meaning_number.remove(m_n)
+                    if not ref.meaning_number:
+                        self._entries[i].references[ref_id][j].usable = False
+                    if ref.prefix:
+                        if not any(ref.prefix in tr for tr in
+                                   '; '.join(sum(list(targ_entry.translation.values()), [])).split('; ')):
+                            self._entries[i].references[ref_id][j].usable = False
+            if all(not ref.usable for ref in sum(list(self._entries[i].references.values()), [])) and not self._entries[
+                i].translation:
+                ids_to_delete.append(i)
+
+        for i in sorted(ids_to_delete, reverse=True):
+            print(f'No translations and no usable references: {self._entries[i].eid}')
+            self._entries.pop(i)
+
+    def _convert_to_entry(self, string: str) -> (List[WarodaiEntry], List[WarodaiEntry]):
+        def _resolve_lexemes_and_readings(string: str) -> (List[str], List[str]):
+            s_string = string.split('\n')
+            rl = re.search(r'^(?P<reading>.*?)…?\s?(?:【(?P<lexeme>.*?)】)?\(', s_string[0])
+
+            if rl is None:
+                return [string], [], ''
+
+            lexemes = []
+
+            if rl.group('lexeme') is not None:
+                lex = rl.group('lexeme').replace('…', '')
+                lexeme_number_temp = [val for val in re.findall(r'([IV]*)', lex) if val]
+                if lexeme_number_temp:
+                    lex = re.sub(r'([IV]*)', '', lex)
+                    lexeme_number = lexeme_number_temp[0]
+                lexemes.extend([l for l in re.split(r'[･ ,]', lex) if l])
+            else:
+                rd = rl.group('reading').replace('…', '')
+                lexeme_number_temp = [val for val in re.findall(r'([IV]*)', rd) if val]
+                if lexeme_number_temp:
+                    rd = re.sub(r'([IV]*)', '', rd)
+                    lexeme_number = lexeme_number_temp[0]
+                lexemes.extend(rd.split(', '))
+
+            readings = [x.strip() for x in
+                        re.sub(r'[a-zA-Z]*?', '',
+                               JTran.transliterate_from_kana_to_hira(re.sub(r'[…IV]*', '', rl.group('reading')))).split(
+                            ', ')]
+
+            return lexemes, readings
+
+        def _extract_references(translations: List[str]) -> ({str: List[WarodaiReference]}, List[str]):
+            res = {}
+
+            if not any('a href' in tr for tr in translations):
+                return res, translations
+
+            translations = [t.replace('《сокр. см.》', '《сокр.》') for t in translations]
+
+            for i, _ in enumerate(translations):
+                if 'a href' in translations[i]:
+                    mode = ''
+                    body = ''
+                    while True:
+                        decomposed_tr = re.search(
+                            r'(?P<left_part>〔\d+〕.*?)(?P<body>[^;]*)(?P<mode>《[^《]+?》)(?P<to_remove> <a href=\"#(?P<eid>.+?)\">.+?(?P<lexeme_number>[iv]+)?\s?(?P<meaning_number>[0-9,\s]+)?(?:\((?P<prefix>〈.+[〉＿])\))?<\/a>,?)(?P<right_part>.+)?',
+                            translations[i])
+
+                        if decomposed_tr is None:
+                            translations[i] = re.sub(r'; $', '', translations[i].replace(f'{body}{mode}', ''))
+                            if re.search(r'^〔\d+〕$', translations[i]) is not None:
+                                translations[i] = ''
+                            break
+
+                        if 'сокр.' in decomposed_tr.group('mode') or 'от' in decomposed_tr.group('mode'):
+                            break
+
+                        if not mode:
+                            mode = decomposed_tr.group('mode')
+                        if not body:
+                            body = decomposed_tr.group('body')
+
+                        ref = WarodaiReference(eid=decomposed_tr.group('eid'),
+                                               mode=re.sub(r'\s?см.', '', decomposed_tr.group('mode')[1:-1]),
+                                               body=body.strip(),
+                                               verified=True,
+                                               usable=True)
+                        if decomposed_tr.group('meaning_number') is not None:
+                            ref.meaning_number.extend(decomposed_tr.group('meaning_number').strip().split(', '))
+                        else:
+                            ref.meaning_number.append('-1')
+                        if decomposed_tr.group('prefix') is not None:
+                            ref.prefix = decomposed_tr.group('prefix')
+
+                        res.setdefault(re.search(r'^〔(\d+)〕', decomposed_tr.group('left_part')).group(1), []).append(
+                            ref)
+
+                        translations[i] = translations[i].replace(decomposed_tr.group('to_remove'), '')
+
+            translations = [tr.strip() for tr in translations]
+            return res, [tr for tr in translations if tr]
+
+        def _normalize_translations(translations: List[str]) -> {int: List[str]}:
+            if not translations:
+                return {}
+            res = {}
+            keys = [re.search(r'〔(\d+)〕', item).group(1) for item in translations]
+            values = [re.search(r'〔\d+〕(.+)', item).group(1) for item in translations]
+            for item in zip(keys, values):
+                res.setdefault(item[0], []).append(item[1])
+            return res
+
+        def _extract_translations(translations: List[str]) -> List[str]:
+            cleaned_translations = []
+            for tr in translations:
+                tr_temp = tr * 1
+                tr_temp = tr_temp.replace('тж.', '@') \
+                    .replace('тк.', '@') \
+                    .replace('редко', '@') \
+                    .replace('чаще', '@') \
+                    .replace('обычно', '@') \
+                    .replace('сокр.', '@') \
+                    .replace(' 永;', '') \
+                    .replace('井)', '') \
+                    .replace('(<i>сокр. погов.</i> いざという時は親知らず子知らず)', '') \
+                    .replace('(<i>тж.</i> ～になる)', '') \
+                    .replace('(<i>как написание</i> 角 <i>и</i> 甪)', '') \
+                    .replace('五畿内', '') \
+                    .replace('(<i>о своем тк.</i> 具える)', '') \
+                    .replace('(<i>о себе тк.</i> 具わる)', '') \
+                    .replace('(<i>как много в Китае людей по фамилии Чжан</i> 張 <i>и Ли</i> 李)', '') \
+                    .replace('(<i>слово-каламбур, основанное на том, что</i> ななつ 七つ <i>синонимично слову</i> しち 七, '
+                             '<i>а</i> しち 七 <i>омонимично компоненту</i> 質 <i>в слове</i> しちや 質屋)', '') \
+                    .replace('<i>ист.</i> три царства (<i>а) Япония, Китай, Индия; б) Вэй</i> 魏, <i>У</i> 呉, '
+                             '<i>Шу</i> 蜀)', '') \
+                    .replace('(<i>искаженное</i> 取りつ置きつ)', '') \
+                    .replace('(<i>сокр.</i> ななくさのせっく【七草の節句】)', '') \
+                    .replace('(<i>из-за созвучия слов</i> 氷菓子 <i>и</i> 高利貸し)', '') \
+                    .replace('(<i>обычно</i> 尼さん)', '') \
+                    .replace('<i>сокр.</i> китигаи 気違い', '') \
+                    .replace('(36 кв. сяку 尺)', '') \
+                    .replace('(貫)', '') \
+                    .replace(' 仙 ', '') \
+                    .replace('愛郷の念', '') \
+                    .replace('的', '') \
+                    .replace('百尺竿頭に一歩を進める', '') \
+                    .replace('頤振り三年', '') \
+                    .replace('合わせ物は離れ物', '') \
+                    .replace('一物あらば一累を添う', '') \
+                    .replace('鷸蚌の争いは漁夫の利', '') \
+                    .replace('陰陽五行説', '') \
+                    .replace('瘡気と自惚れのないものはない', '') \
+                    .replace('百年河清を待つ', '') \
+                    .replace('鶏口となるも牛後(牛尾)となるなかれ', '') \
+                    .replace('10 сяку (勺)', '') \
+                    .replace('里腹三日', '') \
+                    .replace('蜀犬日に吠える', '') \
+                    .replace('自縄自縛に陥る', '') \
+                    .replace('短気は損気', '') \
+                    .replace('酒は憂いの玉ぼうき', '') \
+                    .replace('太郎と花子', '') \
+                    .replace('茶腹も一時', '') \
+                    .replace('渇しても盗泉の水を飲まず', '') \
+                    .replace('人には能不能がある', '') \
+                    .replace(' 八)', '') \
+                    .replace('<i>(звук</i> ん <i>в яп. языке)</i>', '') \
+                    .replace('百聞一見に如かず', '') \
+                    .replace('遠水をもって近火を救うべからず', '') \
+                    .replace('一桃腐りて百桃損ず', '') \
+                    .replace('(<i>букв.</i> как знак 一)', '') \
+                    .replace('又もとの杢阿弥だ', '') \
+                    .replace('«や»', '') \
+                    .replace('細工は流々仕上げを御覧じろ', '') \
+                    .replace('<i>сокр.</i> 気違い', '') \
+                    .replace('ミイラ取りがミイラになる', '') \
+                    .replace('(<i>в виде знака</i> 井)', '') \
+                    .replace('盗人に追い銭', '') \
+                    .replace('九仞の功を一簣に虧く', '') \
+                    .replace('焼け跡の釘拾い', '') \
+                    .replace('初めの勝ちは糞勝ち', '') \
+                    .replace('巧遅は拙速に如かず', '') \
+                    .replace('猿の尻笑い', '') \
+                    .replace('<i>@</i> 気違い', '') \
+                    .replace('(<i>от</i> ごねる <i>и</i> 得)', '') \
+                    .replace('(<i>от яп.</i> とても <i>и нем.</i> schön)', '') \
+                    .replace('(<i>яп.</i> はっぴ <i>и англ.</i> coat)', '') \
+                    .replace('(<i>яп.</i> 丸 <i>и англ.</i> copyright)', '') \
+                    .replace('(<i>кит.</i> 没法子 [мэй фацзы])', '') \
+                    .replace('<i>от</i> ベース <i>и англ.</i> up', '') \
+                    .replace('omachidousama 【お待ち遠様】 [deshita]', '')\
+                    .replace('駟も舌に及ばず <i>посл.', '')\
+                    .replace('衆口は金を熔かす', '')\
+                    .replace('屁をひって尻すぼめ', '')\
+                    .replace('知者にも千慮の一失', '')\
+                    .replace('憎まれっ子世に憚る', '')\
+                    .replace('万芸に通じて一芸を成さない', '')\
+                    .replace('夜目遠目傘の中', '')\
+                    .replace('李下に冠を正さず, 李下の冠', '')
+                tr_temp = re.sub(r'(<a href=.+?<\/a>)', '', tr_temp)
+                tr_temp = re.sub(r'\(<i>@.+?\s[^～]+?\)', '', tr_temp)
+                tr_temp = re.sub(r'{.+}', '', tr_temp)
+
+                tr_temp = re.sub(r'(～)([^\s]+?\s)', r'\1 ', tr_temp + ' ')
+                tr_temp = re.sub(r'＝([^～]+)～', '', tr_temp)
+                tr_temp = re.sub(r'…([^～]+)～', '', tr_temp)
+                tr_temp = re.sub(r'｜([^～]+)～', '', tr_temp)
+                tr_temp = re.sub(r'(…?～ )', '', tr_temp)
+
+                tr_temp = re.sub(r'(?P<to_remove>\(<i>(?P<mode>[^)]+?)</i> (?P<lexeme>[^<a-zа-я0-9(]+?)\) )', '',
+                                 tr_temp)
+                tr_temp = re.sub(r'\(\<i\>[а-я\s]+\.?\<\/i\> [^)]+\) \(\<i\>[а-я\s]+\.?\<\/i\> [^)]+\)', '', tr_temp)
+
+                if not tr_temp or any(_is_kanji(char) for char in tr_temp) and any(
+                        _is_kanji(char) for char in re.sub(r'(【.+?】)', '', tr_temp)) or \
+                        'на своем месте по алфавиту' in tr_temp:
+                    continue
+                if not any(_is_hira_or_kata(char) for char in tr_temp):
+                    cleaned_translations.append(tr)
+
+            not_to_confuse_expressions = [r"(\(<i>не смешивать с.+?\))",
+                                          r"(<i>не смешивать .+?</i> <a href=.+?>.+?</a>)",
+                                          r"(\d\) <i>не смешивать с.+)"]
+            for exp in not_to_confuse_expressions:
+                cleaned_translations = [re.sub(exp, '', ct) for ct in cleaned_translations]
+
+            cleaned_translations = [
+                tr.replace(': ～', ' ～').replace(': …', ' …').replace('◇', '').replace('.:', '.')
+                    .replace('<a href="#004-81-10">二</a>', '二').strip() for tr in
+                cleaned_translations]
+            cleaned_translations = [re.sub(r'^(\d+\)):', r'\1', tr) for tr in cleaned_translations]
+
+            cleaned_translations = [
+                tr.replace(' <i>и</i>', ',').replace(' <i>а тж.</i>', '')
+                    .replace('<i>и ср.</i>', '<i>ср.</i>').replace('</a> и <a', '</a>, <a')
+                    .replace(' <i>(зима)</i>', '').replace(' <i>(весна)</i>', '')
+                    .replace(' <i>(лето)</i>', '').replace(' <i>(осень)</i>', '') for tr
+                in
+                cleaned_translations if tr]
+            cleaned_translations = [re.sub(r'(^\d+\.):(\s.+)', r'\1\2', ct) for ct in cleaned_translations]
+
+            removal_expressions = [r'\((?P<mode><i>с[мр]\.[\sа-я\.]*)</i>\s(?P<to_remove><a.+?>.+?</a>,?\s?)',
+                                   r'>?(?P<mode>(?:[;,] )?<i>ср\.[\sа-я\.]*)</i>\s(?P<to_remove><a.+?>.+?</a>[,;]?\s?)',
+                                   r'(?P<mode>[;,] с[мр]\.[\sа-я\.]*)</i>\s(?P<to_remove><a.+?>.+?</a>[,;]?\s?)',
+                                   r'>?(?P<mode>[;,] <i>с[мр]\.[\sа-я\.]*)</i>\s(?P<to_remove><a.+?>.+?</a>[,;]?\s?)',
+                                   r'(?P<mode>(?:; )?<i>ант.)</i>\s(?P<to_remove><a.+?>.+?</a>)',
+                                   r'(?P<mode><i>гл. обр.)</i>\s(?P<to_remove><a.+?>.+?</a>[,;]?\s?)',
+                                   r'(?P<mode>)(?P<to_remove>\s\(<a href.+?>.+?<\/a>\))']
+            extraction_expressions = [
+                r'<i>(?P<mode>[а-я\.\s]*см\.)</i>\s<a href=\"#(?P<eid>.+)\".+?(?P<lex_num>I*)】?(?P<tr_num>[0-9]*)</a>',
+                r'～[^\s]+\s<i>(?P<mode>[а-я\.]*см\.)</i>\s<a href=\"#(?P<eid>.+)\".+?(?P<lex_num>I*)】?(?P<tr_num>[0-9]*)</a>']
+            for i, _ in enumerate(cleaned_translations):
+                if 'a href' not in cleaned_translations[i]:
+                    continue
+                for exp in removal_expressions:
+                    mode = ''
+                    while True:
+                        to_remove = re.search(exp, cleaned_translations[i])
+                        if to_remove is not None:
+                            if not mode:
+                                mode = to_remove.group('mode')
+                            cleaned_translations[i] = cleaned_translations[i].replace(to_remove.group('to_remove'), '')
+                        else:
+                            if mode:
+                                cleaned_translations[i] = cleaned_translations[i].replace(f'{mode}</i> <i>и т. п.</i>',
+                                                                                          '')
+                                if '<i>' in mode:
+                                    cleaned_translations[i] = cleaned_translations[i].replace(f'{mode}</i> ', '')
+                                else:
+                                    cleaned_translations[i] = cleaned_translations[i].replace(f'{mode}', '')
+                                cleaned_translations[i] = cleaned_translations[i].replace(' ()', '').replace('()', '')
+                            break
+
+            cleaned_translations = [re.sub(r'^[.;]$', '', ct) for ct in cleaned_translations]
+            cleaned_translations = [re.sub(r'^\d+\)\s?.$', '', ct) for ct in cleaned_translations]
+            cleaned_translations = [ct.replace(' )', ')') for ct in cleaned_translations if ct]
+
+            pointed_numbers = any(re.search(r'^\d\.', ct) is not None for ct in cleaned_translations)
+            bracketed_numbers = any(re.search(r'^\d\)', ct) is not None for ct in cleaned_translations)
+            b_num_expression = r'(^\d+\))(.*)'
+            p_num_expression = r'(^\d+\.)(.*)'
+            if bracketed_numbers:
+                num_expression = r'(^\d+\))(.*)'
+            elif pointed_numbers:
+                num_expression = r'(^\d+\.)(.*)'
+
+            if len(cleaned_translations) > 1 and re.search(r'^\d[.)]', cleaned_translations[0]) is None and \
+                    (bracketed_numbers or pointed_numbers):
+                for i, _ in enumerate(cleaned_translations[1:]):
+                    num = re.search(num_expression, cleaned_translations[i + 1])
+                    if num is not None:
+                        cleaned_translations[i + 1] = f'{num.group(1)} {cleaned_translations[0]}{num.group(2)}'
+                cleaned_translations = cleaned_translations[1:]
+
+            if bracketed_numbers or pointed_numbers:
+                cur_id = -1
+                for i, _ in enumerate(cleaned_translations):
+                    num = re.search(p_num_expression, cleaned_translations[i])
+                    if num is None and bracketed_numbers:
+                        num = re.search(b_num_expression, cleaned_translations[i])
+                    if num is not None:
+                        cur_id = i
+                    elif cleaned_translations[i][0] in ['～', '｜', '＝', '…', '['] or _is_kanji(cleaned_translations[i][0])\
+                            or _is_hira_or_kata(cleaned_translations[i][0]) or cleaned_translations[i].startswith('<i>') \
+                            or re.search(r'^[а-ж]\)\s', cleaned_translations[i]) is not None or re.search(r'^[а-я]+',
+                                                                                                          cleaned_translations[
+                                                                                                              i]) is not None:
+                        cleaned_translations[
+                            cur_id] = f'{cleaned_translations[cur_id]}{" " if cleaned_translations[cur_id][-1] in [";", ")", "."] else "; "}{cleaned_translations[i]}'
+                        cleaned_translations[i] = ''
+                cleaned_translations = [ct for ct in cleaned_translations if ct]
+
+            if pointed_numbers and bracketed_numbers:
+                aff_id = -1
+                cur_aff = ''
+                add_meaning = ''
+                for i, _ in enumerate(cleaned_translations):
+                    if re.search(r'^\d\.$', cleaned_translations[i]) is not None:
+                        cur_aff = cleaned_translations[i]
+                        aff_id = i
+                        add_meaning = ''
+                    elif re.search(r'^\d\..+$', cleaned_translations[i]) is not None:
+                        cur_aff = re.search(p_num_expression, cleaned_translations[i]).group(1)
+                        add_meaning = re.search(p_num_expression, cleaned_translations[i]).group(2)[1:]
+                        aff_id = i
+                    elif re.search(b_num_expression, cleaned_translations[i]) is not None:
+                        if not add_meaning:
+                            cleaned_translations[
+                                i] = f'{cur_aff}{"" if cleaned_translations[i][0].isnumeric() else " "}{cleaned_translations[i]}'
+                        else:
+                            cleaned_translations[
+                                i] = f'{cur_aff}{"" if cleaned_translations[i][0].isnumeric() else " "}{re.search(b_num_expression, cleaned_translations[i]).group(1)} {add_meaning}{re.search(b_num_expression, cleaned_translations[i]).group(2)}'
+                        cleaned_translations[aff_id] = ''
+                cleaned_translations = [ct for ct in cleaned_translations if ct]
+
+            if not pointed_numbers and not bracketed_numbers and len(cleaned_translations) > 1:
+                if re.search(r'^<i>[^</i>]+</i>$', cleaned_translations[0]) is not None:
+                    cleaned_translations = [f'{cleaned_translations[0]} {tr}' for tr in cleaned_translations[1:]]
+
+            cleaned_translations = [re.sub(r'(\s[а-ж\d]+\)\s)', ' ', tr) for tr in cleaned_translations if tr]
+
+            if pointed_numbers or bracketed_numbers:
+                cur_val = -1
+                for i, _ in enumerate(cleaned_translations):
+                    tr_idx = re.search(r'^(?P<number>\d+)[\d).]+\s(?P<value>.*)', cleaned_translations[i])
+                    if tr_idx is not None:
+                        cleaned_translations[i] = f'〔{tr_idx.group("number")}〕{tr_idx.group("value")}'
+                        cur_val = i
+                    elif i > 0:
+                        if cleaned_translations[i].startswith('～'):
+                            cleaned_translations[cur_val] += ' ' + cleaned_translations[i]
+                            cleaned_translations[i] = ''
+                        else:
+                            alpha_pref = re.search(r'^(?P<a_p>[а-ж]\))(?P<rest>\s.+)', cleaned_translations[i])
+                            if alpha_pref is not None:
+                                cleaned_translations[cur_val] += alpha_pref.group('rest')
+                                cleaned_translations[i] = ''
+            else:
+                cleaned_translations = [f'〔1〕{ct}' for ct in cleaned_translations]
+
+            cleaned_translations = [re.sub(r'(?:<i>)(?P<op_pr>\(?)(?P<body>.+?)(?P<punct>[:;]?)(?P<cl_pr>\)?)(?:<\/i>)',
+                                           lambda m: f'《{m.group("op_pr")}{m.group("body")}{m.group("cl_pr")}》', tr) for
+                                    tr in cleaned_translations]
+            cleaned_translations = [re.sub(r'(\.》)$', '》', ct) for ct in cleaned_translations]
+            cleaned_translations = [re.sub(r'(\(《[^\(\)]+》\))', lambda m: m.group(1)[1:-1], ct) for ct in
+                                    cleaned_translations]
+            cleaned_translations = [re.sub(r'(《\([^\(\)]+\)》)', lambda m: f'《{m.group(1)[2:-2]}》', ct) for ct in
+                                    cleaned_translations]
+            cleaned_translations = [ct.replace(', ср.》', '》') for ct in cleaned_translations]
+            cleaned_translations = [re.sub(r'《«([^《«»》]+)»》', r'《\1》', ct) for ct in cleaned_translations]
+            cleaned_translations = [ct.replace('.》 《', '. ') for ct in cleaned_translations]
+
+            for i, _ in enumerate(cleaned_translations):
+                old_kp = list({x[:-1] if re.search(r'^[^(]+\)', x) else x for x in
+                               re.findall(r'[^а-я>【]([…～＝｜][^\s<,;a-zа-я».]+)', ' ' + cleaned_translations[i])})
+                for j, kana_part in enumerate(sorted([re.split(r'([…～＝｜])', k) for k in old_kp], reverse=True)):
+                    kana_part = [part for part in kana_part[1:] if part]
+                    kana_part_latin = [(self._normalize_kana(part), part) for part in kana_part]
+                    for kp1, kp2 in list(zip([x for x in kana_part_latin if kana_part_latin.index(x) % 2 == 0],
+                                             [x for x in kana_part_latin if kana_part_latin.index(x) % 2 == 1])):
+                        cleaned_translations[i] = cleaned_translations[i].replace(f'{kp1[1]}{kp2[1]}',
+                                                                                  f'〈{kp1[0]}{kp2[0]}〉')
+                if old_kp:
+                    cleaned_translations[i] = cleaned_translations[i].replace('〈-', '…〈-')
+                    cleaned_translations[i] = re.sub(r'〈\|([^〈]+?)〉～?', r'＿≪-\1≫', cleaned_translations[i])
+                    cleaned_translations[i] = cleaned_translations[i].replace('〉〈~', '〉＿〈~')
+                    cleaned_translations[i] = cleaned_translations[i].replace('〉～', '〉＿')
+
+            cleaned_translations = [re.sub(r'〈~\[([a-z\s]+)]〉', r'〈[~\1]〉', ct) for ct in cleaned_translations]
+
+            cleaned_translations = [ct.replace('》 《', ', ') for ct in cleaned_translations]
+            for i, _ in enumerate(cleaned_translations):
+                if 'т. п.》; 《' not in cleaned_translations[i]:
+                    cleaned_translations[i] = cleaned_translations[i].replace('》; 《', '; ')
+            cleaned_translations = [re.sub(r'([.;])$', '', ct.lower()).replace('́', '').strip() for ct in
+                                    cleaned_translations if ct]
+            return cleaned_translations
+
+        def _resolve_ref_reading(src_readings: List[str], new_lexemes: str):
+            temp_lexeme = re.sub(r'/.+?/', '', new_lexemes).split(', ')
+            for t_l in temp_lexeme:
+                kana = [char for char in t_l if _is_hiragana(char)]
+                for s_r in src_readings:
+                    if any(char not in s_r for char in kana) and kana:
+                        return []
+            return src_readings
+
+        res = []
+        temp_res = []
+        s_string = string.split('\n')
+
+        eid = re.search(r'〔(.*)〕', s_string[0]).group(1)
+
+        if eid in ['006-98-10', '005-88-27',  # формы
+                   # ссылки без статей
+                   '004-93-94', '003-76-16', '003-28-65', '002-08-39', '003-56-77', '002-95-49',
+                   '004-46-25', '000-29-73', '002-84-88', '002-50-71', '002-78-60', '003-64-62',
+                   '006-88-95', '000-08-43',
+                   # статья-дубликат
+                   '009-19-87']:
+            return [], []
+
+        lexemes, readings = _resolve_lexemes_and_readings(string)
+        references = []
+
+        global_quasi_reference = re.search(r'^<i>(?P<mode>[^)(]+?)<\/i> (?P<lexeme>[^<a-zA-Zа-яА-Я0-9(～]+?)$',
+                                           string.split('\n')[1])
+        if global_quasi_reference is not None:
+            mode = ''
+            if global_quasi_reference.group('mode') in ['уст.', 'неправ.', 'кн.', 'редко', 'тж.', 'чаще']:
+                mode = re.sub(r'\s?тж\.\s?', '', global_quasi_reference.group('mode'))
+                mode = f'《{mode}》 ' if mode else ''
+            else:
+                mode = 'ignore'
+            translations = _extract_translations(string.split('\n')[2:])
+        else:
+            translations = _extract_translations(string.split('\n')[1:])
+
+        if translations:
+            references, translations = _extract_references(translations)
+
+            if global_quasi_reference is not None and mode and mode != 'ignore':
+                if translations:
+                    temp_translations = [re.sub(r'〔\d+〕', '', tr) for tr in translations]
+                    temp_res.append(
+                        WarodaiEntry(lexeme=re.sub(r'/.+?/', '', global_quasi_reference.group('lexeme')).split(', '),
+                                     eid='||',
+                                     reading=_resolve_ref_reading(readings, global_quasi_reference.group('lexeme')),
+                                     translation={'1': [f'{mode}{tr}' for tr in temp_translations]},
+                                     references={}))
+                elif references:
+                    temp_res.append(
+                        WarodaiEntry(lexeme=re.sub(r'/.+?/', '', global_quasi_reference.group('lexeme')).split(', '),
+                                     eid='||',
+                                     reading=_resolve_ref_reading(readings, global_quasi_reference.group('lexeme')),
+                                     translation={},
+                                     references={'1': [WarodaiReference(eid=eid, verified=True, usable=True,
+                                                                        mode=mode[1:-2] if mode else '',
+                                                                        meaning_number=list(references.keys()))]}))
+
+            double_quasi_references = [re.search(r'\((《[а-я\s\.]+?》 [^)a-zа-я]+\) \(《[а-я\s\.]+》 [^)a-zа-я]+)\)', tr)
+                                       for tr in translations]
+            referenced_translations = list(zip(double_quasi_references, translations))
+            referenced_translations = [(r, t) for r, t in referenced_translations if r is not None]
+            if referenced_translations:
+                for r, t in referenced_translations:
+                    parts = [re.search(r'(?P<to_remove>《(?P<mode>[^》]+)》 (?P<lexeme>.+))', p) for p in
+                             r.group(1).split(') (')]
+                    parts = [p for p in parts if p.group('mode') != 'о себе тк.']
+                    temp_tr = re.sub(r'〔\d+〕', '', t.replace(f'({r.group(1)}) ', ""))
+                    for part in parts:
+                        if part.group('mode') in ['тк.', 'тж.']:
+                            temp_res.append(WarodaiEntry(lexeme=[part.group('lexeme')],
+                                                         eid='|||',
+                                                         reading=readings,
+                                                         translation={'1': [temp_tr]},
+                                                         references={}))
+                        else:
+                            temp_res.append(WarodaiEntry(lexeme=[part.group('lexeme')],
+                                                         eid='|||',
+                                                         reading=readings,
+                                                         translation={'1': [
+                                                             f'《{part.group("mode").replace("тк.", "").strip()}》 ' + temp_tr]},
+                                                         references={}))
+                    if 'тк.' in [p.group('mode') for p in parts]:
+                        translations.remove(t)
+                    else:
+                        t_id = translations.index(t)
+                        for part in parts:
+                            translations[t_id] = translations[t_id].replace(f"({part.group('to_remove')}) ", '')
+
+            quasi_references = [re.search(r'(?P<to_remove>\(《(?P<mode>[^)》]+?)》 (?P<lexeme>[^<a-zа-я0-9(]+?)\) )', tr)
+                                for tr in translations]
+            referenced_translations = list(zip(quasi_references, translations))
+            referenced_translations = [(r, t) for r, t in referenced_translations if r is not None]
+            if referenced_translations:
+                for r, t in referenced_translations:
+                    if all(new_lex in lexemes for new_lex in r.group('lexeme').split(', ')) and 'тк.' not in r.group(
+                            'mode') or r.group('mode') in ['о своем тк.', 'о себе тк.', 'сокр. от', 'от сокр.',
+                                                           'сокр. яп.', 'производное от']:
+                        if r.group('mode') in ['сокр. от', 'от сокр.', 'сокр. яп.', 'производное от']:
+                            translations[translations.index(t)] = t.replace(r.group('lexeme'),
+                                                                            self._normalize_kana(r.group('lexeme')))
+                        continue
+                    if r.group('mode') not in ['вм.', 'сокр.', 'от', 'от первой буквы слова'] and 'форм' not in r.group(
+                            'mode'):
+                        mode = re.sub(r"\s?т[жк]\.\s?", "", r.group("mode"))
+                        if mode == 'правильнее':
+                            replace_with = 'неправ.'
+                            mode = ''
+                        elif mode == 'обычно':
+                            replace_with = 'реже'
+                            mode = ''
+                        elif mode in ['часто', 'чаще']:
+                            replace_with = ''
+                            mode = ''
+                        elif mode == 'сокр. погов.':
+                            replace_with = r.group('to_remove')
+                            mode = ''
+                        elif mode == 'неправ. вм.':
+                            replace_with = 'неправ.'
+                            mode = ''
+                        elif mode == 'искаж.':
+                            replace_with = 'искаж.'
+                            mode = ''
+                        else:
+                            replace_with = ''
+                        mode = f'《{mode}》 ' if mode else ''
+                        replace_with = f'《{replace_with}》 ' if replace_with else ''
+                        special_reading = re.search(r'/([^/]+?)/', r.group('lexeme'))
+                        if special_reading is not None:
+                            ref_reading = JTran.transliterate_from_kana_to_hira(special_reading.group(1))
+                        else:
+                            ref_reading = _resolve_ref_reading(readings, r.group('lexeme'))
+                        temp_res.append(WarodaiEntry(lexeme=re.sub(r'/.+?/', '', r.group('lexeme')).split(', '),
+                                                     eid='|', reading=ref_reading,
+                                                     translation={'1': [
+                                                         re.sub(r'〔\d+〕', '', t.replace(r.group('to_remove'), mode))]},
+                                                     references={}))
+                        if 'тк.' in r.group('mode'):
+                            translations.remove(t)
+                        else:
+                            translations[translations.index(t)] = t.replace(r.group('to_remove'), replace_with)
+                    else:
+                        t_id = translations.index(t)
+                        translations[t_id] = re.sub(r'(/[^\s]+?/)', '', translations[t_id])
+                        translations[t_id] = t.replace(r.group('lexeme'),
+                                                       ' + '.join([self._normalize_kana(l) for l in
+                                                                   r.group('lexeme').split(', ')]))
+
+        if references or translations:
+            res.append(WarodaiEntry(eid=eid, reading=readings, lexeme=lexemes,
+                                    translation=_normalize_translations(translations), references=references))
+        elif not temp_res:
+            print(f'Failed to parse entry: {eid}')
+        return res, temp_res
+
+    def _load_db(self, fname: str, show_progress: bool = True) -> (List[WarodaiEntry], List[WarodaiEntry]):
+        with open(fname, encoding='utf-16le') as f:
+            contents = f.read().replace('<i>искажённое</i>', '<i>искаж.</i>')
+            contents = contents.replace('[…', '…[')
+            contents = contents.replace('…[を, …に]', '…[を(に)]')
+            contents = contents.replace('(<i>сопровождается в конце предложения частицами</i> [に於て]をや)', '')
+            contents = contents.replace('(<i>вежл.</i> お早うございます)', '')
+            contents = contents.replace('(<i>т. н.</i> じょうげん【上元】, ちゅうげん【中元】<i>и</i> かげん【下元】)', '')
+            contents = contents.replace('(<i>сокр.</i> じばん【地盤】, かんばん【看板】, かばん【鞄】)',
+                                        '(<i>сокр.</i> 地盤, 看板, 鞄)')
+            contents = contents.replace('(<i>ант.</i> てがるい【手軽い】)', '')
+            contents = contents.replace(
+                '<i>ист.</i> три царства (<i>а) Япония, Китай, Индия; б) Вэй</i> 魏, <i>У</i> 呉, '
+                '<i>Шу</i> 蜀)',
+                '<i>ист.</i> три царства (Япония, Китай, Индия; Вэй, У, Шу)')
+            contents = contents.replace('продавец насекомых (<i>напр.</i> <a href="#000-22-17">まつむし【松虫】</a>, '
+                                        '<a href="#001-53-38">すずむし【鈴虫】</a>, <i>которые ценятся за издаваемые ими '
+                                        'звуки</i>).',
+                                        'продавец насекомых (<i>которые ценятся за издаваемые ими звуки</i>).')
+            contents = contents.replace('(<i>напр.</i> 5 — <i>ср.</i> <a href="#008-31-45">ごあく【五悪】</a>, '
+                                        '<a href="#006-52-79">ごかい【五戒】</a>, <a href="#009-59-31">ごきょう【五経】</a> <i>и т. '
+                                        'п.</i>)', '')
+            contents = contents.replace(' (<i>напр.</i> 瓜 <i>и</i> 爪)', '')
+            contents = contents.replace(' (<i>напр.</i> ぴかぴか)', '')
+            contents = contents.replace(' (<i>напр.</i> 上, 三, 凸)', '')
+            contents = contents.replace('(<i>напр.</i> 梅の花)', '')
+            contents = contents.replace('(<i>при отвлечённом счёте, ср.</i> ひ【一】, ふ【二】, み【三】)',
+                                        '(<i>при отвлечённом счёте</i>')
+            contents = contents.replace('(<i>из-за созвучия слов</i> <a href="#006-38-91">こおりがし【氷菓子】</a> <i>и</i> <a '
+                                        'href="#007-72-05">こうりがし【高利貸し】</a>)',
+                                        '(<i>из-за созвучия слов</i> 氷菓子 <i>и</i> 高利貸し)')
+            contents = contents.replace('(<i>обычно</i> あまさん【尼さん】)', '(<i>обычно</i> 尼さん)')
+            contents = contents.replace(
+                '(<i>ср.</i> <a href="#006-83-43">にのぜん</a>, <a href="#000-74-07">にのいと</a> <i>и др. слова, '
+                'начинающиеся с</i> にの…【二の…】)', '')
+            contents = contents.replace(' (<i>см.</i> しょうぎょうほうそう【商業放送】)', '')
+            contents = contents.replace('(<i>англ.</i> baby <i>и яп.</i> たんす【簞笥】)',
+                                        '(<i>англ.</i> baby <i>и яп.</i> 簞笥)')
+            contents = contents.replace('好い気味だ', '～だ')
+            contents = contents.replace('…[の]模様だ', '…[の]～だ')
+            contents = contents.replace('宜なるかな', '～なるかな')
+            contents = contents.replace('胸糞が悪い', '～が悪い')
+            contents = contents.replace('糞味噌にけなす', '～にけなす')
+            contents = contents.replace('</i> いわざる, きかざる, みざる <i>—', '')
+            contents = contents.replace('ぽきんと折れる', '～折れる')
+            contents = contents.replace('ぺちゃくちゃしゃべる', '～しゃべる')
+            contents = contents.replace('べちゃべちゃしゃべる', '～しゃべる')
+            contents = contents.replace('へとへとに疲れる', '～に疲れる')
+            contents = contents.replace('ぶらぶら下がる', '～下がる')
+            contents = contents.replace('[足の]踏み所もない', '…[足の]～もない')
+            contents = contents.replace('…の顰に傚う', '…の～に傚う')
+            contents = contents.replace(
+                '(<i>8 февраля, в Киото 8 декабря, день подношения храму Авасима сломанных иголок, '
+                'накопившихся за год; в этот день отдыхают от шитья; Храм Авасима был избран потому, '
+                'что иначе назывался</i> Хариса́йнё 婆利才女)', '')
+            contents = contents.replace('腹鼓を打つ', '～を打つ')
+            contents = contents.replace('腹ごなしに散歩する', '～に散歩する')
+            contents = contents.replace(' 明州', '')
+            contents = contents.replace('にゃおと鳴く', '～と鳴く')
+            contents = contents.replace('にたりと笑う', '～と笑う')
+            contents = contents.replace('どたりと落ちる', '～と落ちる')
+            contents = contents.replace('頬杖を突く', '～を突く')
+            contents = contents.replace('付きが良い', '～が良い')
+            contents = contents.replace('手枕をして寝る', '～をして寝る')
+            contents = contents.replace('外輪(鰐)の足', '～の足')
+            contents = contents.replace('金離れの悪い', '～の悪い')
+            contents = contents.replace('(<i>от кит.</i> сянь 仙)', '(<i>от кит.</i> 仙 [сянь])')
+            contents = contents.replace('…は世間知らずだ', '…は～だ')
+            contents = contents.replace('ずでんどうと倒れる', '～と倒れる')
+            contents = contents.replace('じろじろ見る', '～見る')
+            contents = contents.replace('しんにゅうをかけて言う', '～をかけて言う')
+            contents = contents.replace('さめざめと泣く', '～と泣く')
+            contents = contents.replace('ごろりと寝転ぶ', '～と寝転ぶ')
+            contents = contents.replace('(<i>санскр.</i> Pañca Skandhāh: 色 <i>плоть</i>, 受 <i>ощущения и чувства</i>, '
+                                        '想 <i>воображение</i>, 行 <i>духовная деятельность</i>, 識 <i>познание</i>)', '')
+            contents = contents.replace('こっくりこっくりやる(居眠りをする)', '～やる, ～居眠りをする')
+            contents = contents.replace('ぐりはまに行く', '～に行く')
+            contents = contents.replace('(<i>сокр.</i> 多伽羅, <i>санскр.</i> tagara)',
+                                        '(<i>сокр.</i> 多伽羅) (<i>санскр.</i> tagara)')
+            contents = contents.replace('きゃっと叫ぶ', '～叫ぶ')
+            contents = contents.replace('お聞きに入れる', '～に入れる')
+            contents = contents.replace('陰(蔭)口をいう(利く)', '～をいう, ～を利く')
+            contents = contents.replace('追い立てを食う', '～を食う')
+            contents = contents.replace('遺腹の子', '～の子')
+            contents = contents.replace('居心地のよい', '～のよい')
+            contents = contents.replace('主顔に振る舞う', '～に振る舞う')
+            contents = contents.replace('からからと笑う', '～と笑う')
+            contents = contents.replace('相々傘で行く', '～で行く')
+            contents = contents.replace('愛想尽かしを言う', '～を言う')
+            contents = contents.replace('相槌を打つ', '～を打つ')
+            contents = contents.replace('飽くことを知らぬ', '～ことを知らぬ')
+            contents = contents.replace('あけっぴろげの笑いを浮べる', '～の笑いを浮べる')
+            contents = contents.replace('明け残る空', '～空')
+            contents = contents.replace('足拵えを厳重にする', '～を厳重にする')
+            contents = contents.replace('足触りがよい', '～がよい')
+            contents = contents.replace('足なれた人', '～人')
+            contents = contents.replace('足湯を使う', '～を使う')
+            contents = contents.replace(
+                'атэдзи, искусственно (неправильно) подобранные иероглифы <i>(1) иероглифы, которыми пишутся некоторые слова японского и реже китайского происхождения по смыслу слова в целом, а не по обычному чтению каждого иероглифа в отдельности:</i> 平時 <i>для слова</i> ицумо <i>«всегда, обычно»;</i> 真実 <i>для слова</i> хонто: <i>«правда, истина»; 2) иероглифы, употреблённые чисто фонетически:</i> 目出度く мэдэтаку <i>«успешно»)</i>',
+                'атэдзи\n1) <i>иероглифы, которыми '
+                'пишутся некоторые слова японского и реже китайского происхождения по смыслу слова в целом, '
+                'а не по обычному чтению каждого иероглифа в отдельности</i>;\n2) <i>иероглифы, употреблённые чисто '
+                'фонетически</i>')
+            contents = contents.replace('跡白浪と逃げる(消えてしまう)', '～と逃げる, ～消えてしまう')
+            contents = contents.replace('あぶあぶいう, あぶあぶやる', '～いう, ～やる')
+            contents = contents.replace('雨まじりの雪', '～の雪')
+            contents = contents.replace('荒胆をひしぐ(抜く)', '～をひしぐ, ～を抜く)')
+            contents = contents.replace('<i>см.</i> <a href="#003-07-11">ぎしん【疑心】</a>.',
+                                        '<i>посл.</i> у страха глаза велики (<i>букв.</i> страх порождает чёрных чертей).')
+            contents = contents.replace('…は偉とするに足る', '…は～とするに足る')
+            contents = contents.replace('言い出しっ屁だから君からやりたまえ', '～だから君からやりたまえ')
+            contents = contents.replace('生き恥をさらす', '～をさらす')
+            contents = contents.replace('一議に及ばず', '～に及ばず')
+            contents = contents.replace('一物あらば一累/ルイ/を添う', '一物あらば一累を添う')
+            contents = contents.replace('一眸の中/ウチ/に収める', '～の中/ウチ/に収める')
+            contents = contents.replace('一騎当千のつわもの', '～のつわもの')
+            contents = contents.replace('一炊の夢/ユメ/', '～の夢/ユメ/')
+            contents = contents.replace('一寸逃れを云う', '～を云う')
+            contents = contents.replace('いっちょういきましょう', '～いきましょう')
+            contents = contents.replace('一敗地に塗れる', '～地に塗れる')
+            contents = contents.replace('一風変わった男', '～変わった男')
+            contents = contents.replace('逸を以て労を待つ', '～を以て労を待つ')
+            contents = contents.replace('田舎っぽく見える', '～見える')
+            contents = contents.replace('居抜きのままで買う', '～のままで買う')
+            contents = contents.replace('命からがら逃げる', '～逃げる')
+            contents = contents.replace('命勝負と申す', '～と申す')
+            contents = contents.replace('意表に出る', '～に出る')
+            contents = contents.replace('居待の月', '～の月')
+            contents = contents.replace('今迄の所', '～の所')
+            contents = contents.replace('今までずっと', '～ずっと')
+            contents = contents.replace('色気抜きで飲む', '～で飲む')
+            contents = contents.replace('色よい返事', '～返事')
+            contents = contents.replace('曰く付きの女', '～の女')
+            contents = contents.replace('…と言わず', '…と～')
+            contents = contents.replace('と言わぬばかりに', '…と～ばかりに')
+            contents = contents.replace('浮かぬ顔をする', '～顔をする')
+            contents = contents.replace('浮河竹に身を沈める', '～に身を沈める')
+            contents = contents.replace('烏合の衆', '～の衆')
+            contents = contents.replace('…に後手に縛る', '…に～に縛る')
+            contents = contents.replace('後指を差す', '～を差す')
+            contents = contents.replace('嘘八百を並べ立てる', '～を並べ立てる')
+            contents = contents.replace('梲が上がらない', '～が上がらない')
+            contents = contents.replace('内八文字を切る', '～を切る')
+            contents = contents.replace('腕っぷしの強い男', '～の強い男')
+            contents = contents.replace('兔の毛でついたほどのすきもない', '～でついたほどのすきもない')
+            contents = contents.replace('有髪の尼', '～の尼')
+            contents = contents.replace('怨みっこのないように, 怨みっこなしに', '～のないように, ～なしに')
+            contents = contents.replace('рыбы а́ю (鮎)', 'рыбы а́ю')
+            contents = contents.replace('嬉し泣きに泣く', '～に泣く')
+            contents = contents.replace('上の空', '～の空')
+            contents = contents.replace('得も言われぬ', '～も言われぬ')
+            contents = contents.replace('依估の沙汰/サタ/', '～の沙汰/サタ/')
+            contents = contents.replace('…は嘔吐く', '…は～')
+            contents = contents.replace('得体の知れない', '～の知れない')
+            contents = contents.replace('笑壷に入/イ/る', '～に入/イ/る')
+            contents = contents.replace('燕趙悲歌の士', '～の士')
+            contents = contents.replace('猿臂を伸ばす', '～を伸ばす')
+            contents = contents.replace('おいおい泣く', '～泣く')
+            contents = contents.replace('老恥をかく', '～をかく')
+            contents = contents.replace('大胡坐をかく', '～をかく')
+            contents = contents.replace('大腐りに腐って', '～に腐って')
+            contents = contents.replace('大雀の鉄砲', '～の鉄砲')
+            contents = contents.replace('大味噌を付ける', '～を付ける')
+            contents = contents.replace('…を大目に見る', '…を～に見る')
+            contents = contents.replace('大揉めに揉める', '～に揉める')
+            contents = contents.replace('お蚕ぐるみでいる', '～でいる')
+            contents = contents.replace('<i>то же, что</i> おかえりなさい, <i>см.</i> <a href="#003-89-20">かえる【帰る】</a>.',
+                                        '～なさい добро пожаловать! <i>(приветствие члену семьи, вернувшемуся домой со службы, из школы '
+                                        'и т. п.)</i>;')
+            contents = contents.replace('(= おかえりなさい) <i>см.</i> <a href="#003-89-20">かえる【帰る】</a>',
+                                        '<i>см.</i> <a href="000-10-29">おかえり【お帰り】 2 (～なさい)</a>')
+            contents = contents.replace('奥さん孝行の夫', '～の夫')
+            contents = contents.replace('恐れ気もなく', '～もなく')
+            contents = contents.replace('お手の筋だ', '～だ')
+            contents = contents.replace('男泣きに泣く', '～に泣く')
+            contents = contents.replace('お見外れ申しました', '～申しました')
+            contents = contents.replace('親分風を吹かす', '～を吹かす')
+            contents = contents.replace('…は女癖が悪い', '…は～が悪い')
+            contents = contents.replace('お乳母日傘で育てる', '～で育てる')
+            contents = contents.replace(', <i>ср.</i> <a href="#005-96-67">ごぎょう【五行】</a>', '')
+            contents = contents.replace('華を去り実/ジツ/に就く', '～を去り実/ジツ/に就く')
+            contents = contents.replace(
+                '<i>(напр. образование из</i> 山, 上, 下 <i>иероглифа</i> 峠<i>)</i>; <i>ср.</i> <a '
+                'href="#008-24-88">りくしょ【六書】</a>', '')
+            contents = contents.replace('会員外の者', '～の者')
+            contents = contents.replace('快哉を叫ぶ', '～を叫ぶ')
+            contents = contents.replace(', напр.</i> 河, 峰<i>', '')
+            contents = contents.replace('掻い撫での作者', '～の作者')
+            contents = contents.replace('顔向けが出来ない, 顔向けならぬ', '～が出来ない, ～ならぬ')
+            contents = contents.replace('掛かりつけの医者', '～の医者')
+            contents = contents.replace('加冠の式', '～の式')
+            contents = contents.replace('書き具合がいい', '～がいい')
+            contents = contents.replace('掛心地のよい', '～のよい')
+            contents = contents.replace('瘡気と自惚/ウヌボ/れのないものはない', '瘡気と自惚れのないものはない')
+            contents = contents.replace('華胥の国に遊ぶ', '～の国に遊ぶ')
+            contents = contents.replace('華燭の典 ', '～の典 ')
+            contents = contents.replace('拍手を打つ', '～を打つ')
+            contents = contents.replace('加除式のノート', '～のノート')
+            contents = contents.replace('(黄河, <i>букв.</i> жёлтой реки) станут голубыми (清)',
+                                        '(<i>букв.</i> жёлтой реки) станут голубыми')
+            contents = contents.replace('片息をつく', '～をつく')
+            contents = contents.replace('肩車に乗せる', '～に乗せる')
+            contents = contents.replace('かたりと音を立てて落ちる', '～と音を立てて落ちる')
+            contents = contents.replace('片ガラスの時計', '～の時計')
+            contents = contents.replace('隔靴掻痒の感がある', '～の感がある')
+            contents = contents.replace('齧り付き主義を取る', '～を取る')
+            contents = contents.replace('竈持ちのよい女', '～のよい女')
+            contents = contents.replace('からころ音を立てる', '～音を立てる')
+            contents = contents.replace('かるが故に', '～が故に')
+            contents = contents.replace('驩を交じえる', '～を交じえる')
+            contents = contents.replace('侃々諤々の論', '～の論')
+            contents = contents.replace('汗顔の至りである', '～の至りである')
+            contents = contents.replace('神ながらの道', '～の道')
+            contents = contents.replace('神嘗の祭/マツリ/', '～の祭/マツリ/')
+            contents = contents.replace('幹部級の人', '～の人')
+            contents = contents.replace('完膚なきまで', '～なきまで')
+            contents = contents.replace('管鮑の交わり', '～の交わり')
+            contents = contents.replace('官僚畑の政治家', '～の政治家')
+            contents = contents.replace('画餅に帰する', '～に帰する')
+            contents = contents.replace('がみがみ言う', '～言う')
+            contents = contents.replace('(<i>сокр.</i> 僧伽藍摩, <i>санскр.</i> Samgharama)',
+                                        '(<i>сокр.</i> 僧伽藍摩) (<i>санскр.</i> Samgharama)')
+            contents = contents.replace('側[の者]', '～[の者]')
+            contents = contents.replace('雁字搦み(め)に縛る', '～に縛る')
+            contents = contents.replace('頑丈作りの男', '～の男')
+            contents = contents.replace('旗印の下に', '～の下に')
+            contents = contents.replace('古事記 ', '')
+            contents = contents.replace(' 日本書紀', '')
+            contents = contents.replace('きしきし鳴る', '～鳴る')
+            contents = contents.replace('帰心矢のごとし', '～矢のごとし')
+            contents = contents.replace('喜字の齢/ヨワイ/', '～の齢/ヨワイ/')
+            contents = contents.replace('驥足を伸ばす', '～を伸ばす')
+            contents = contents.replace('後朝の別れ', '～の別れ')
+            contents = contents.replace('九牛の一毛/イチモウ/', '～の一毛/イチモウ/')
+            contents = contents.replace('九五の位/クライ/', '～の位/クライ/')
+            contents = contents.replace('九仞の功/コウ/を一簣/イッキ/に虧/カ/く', '九仞の功を一簣に虧く')
+            contents = contents.replace('虚々実々の戦術', '～の戦術')
+            contents = contents.replace('曲学阿世の徒', '～の徒')
+            contents = contents.replace('遽然として退場する', '～として退場する')
+            contents = contents.replace('居然として動かない', '～として動かない')
+            contents = contents.replace('巨歩を進める', '～を進める')
+            contents = contents.replace('きょろきょろ眺める, 目をきょろきょろさせる', '～眺める, ＝目を～させる')
+            contents = contents.replace('きりょう自慢の娘', '～の娘')
+            contents = contents.replace('槿花一日の栄', '～の栄')
+            contents = contents.replace('槿花一朝の夢', '～の夢')
+            contents = contents.replace('金枝玉葉[の身]', '～[の身]')
+            contents = contents.replace(' (琴)', '')
+            contents = contents.replace('琴瑟相和/アイワ/す[る]', '～相和/アイワ/す[る]')
+            contents = contents.replace('ぎすばった顔付', '～顔付')
+            contents = contents.replace('ぎちぎち言う音', '～言う音')
+            contents = contents.replace('牛歩で進む', '～で進む')
+            contents = contents.replace('魚腹に葬られる, 魚腹を肥/コ/やす', '～に葬られる, ～を肥/コ/やす')
+            contents = contents.replace('ぎらりと光る', '～と光る')
+            contents = contents.replace('ぎりぎり歯を鳴らす', '～歯を鳴らす')
+            contents = contents.replace('ぎーぎーいう, ぎーぎー音がする', '～いう, ～音がする')
+            contents = contents.replace('苦学力行の士', '～の士')
+            contents = contents.replace('口利き役を買って出る', '～を買って出る')
+            contents = contents.replace('口ぎれいな事を言う', '～な事を言う')
+            contents = contents.replace('口拍子を取る', '～を取る')
+            contents = contents.replace('くっくと笑う', '～と笑う')
+            contents = contents.replace('苦肉の計(策)', '～の計(策)')
+            contents = contents.replace('首斬り反対を叫ぶ', '～を叫ぶ')
+            contents = contents.replace('隈ない月光', '～月光')
+            contents = contents.replace('倉作りの家', '～の家')
+            contents = contents.replace('呉れ得の貰い損', '～の貰い損')
+            contents = contents.replace('黒山の様な人だかり', '～の様な人だかり')
+            contents = contents.replace('(знаки, <i>напр.</i> 一, 二, 三, 上, 中, 下, レ, <i>указывающие',
+                                        '(<i>знаки, указывающие')
+            contents = contents.replace('具眼の士', '～の士')
+            contents = contents.replace('ぐしゃぐしゃにこわれる', '～にこわれる')
+            contents = contents.replace('ぐっすり眠る', '～眠る')
+            contents = contents.replace('ぐつぐつ煮る', '～煮る')
+            contents = contents.replace('ぐてんぐてんに酔っぱらう', '～に酔っぱらう')
+            contents = contents.replace('ぐびりぐびり飲む', '～飲む')
+            contents = contents.replace('傾国の美人', '～の美人')
+            contents = contents.replace('決河の勢で', '～の勢で')
+            contents = contents.replace('闕下に伏奏す', '～に伏奏す')
+            contents = contents.replace('逆鱗に触れる', '～に触れる')
+            contents = contents.replace('下司口を利く', '～を利く')
+            contents = contents.replace('げっそり痩せる', '～痩せる')
+            contents = contents.replace('原級留置の生徒', '～の生徒')
+            contents = contents.replace('…目に遭わせる', '…目に～')
+            contents = contents.replace('げーげーする(言う)', '～する, ～言う')
+            contents = contents.replace('小当りに当って見る', '～に当って見る')
+            contents = contents.replace('好奇の念', '～の念')
+            contents = contents.replace('公聞に達する', '～に達する')
+            contents = contents.replace('ここと鳴く', '～と鳴く')
+            contents = contents.replace('心行くばかり', '～ばかり')
+            contents = contents.replace('小腰を屈める', '～を屈める')
+            contents = contents.replace('こつんと頭を打ちつける', '～と頭を打ちつける')
+            contents = contents.replace('ことりと音がした', '～と音がした')
+            contents = contents.replace('この段御通知申し上げます', '～御通知申し上げます')
+            contents = contents.replace('鼓腹撃壌の民/タミ/', '～の民/タミ/')
+            contents = contents.replace('小股に歩く', '～に歩く')
+            contents = contents.replace('◇小股をすくう', '～をすくう')
+            contents = contents.replace('小耳に挟む', '～に挟む')
+            contents = contents.replace('こりこり音がする', '～音がする')
+            contents = contents.replace('こんがりと焼けている', '～と焼けている')
+            contents = contents.replace('豪の者', '～の者')
+            contents = contents.replace('傲慢不遜な', '～な')
+            contents = contents.replace('ごくりと飲む', '～と飲む')
+            contents = contents.replace('五節の舞/マイ/', '～の舞/マイ/')
+            contents = contents.replace('ごつんと打つ', '～と打つ')
+            contents = contents.replace('…の伍伴に入/ハイ/る', '…の～に入/ハイ/る')
+            contents = contents.replace('五倫[の道/ドウ/]', '～[の道/ドウ/]')
+            contents = contents.replace('ごーんと鳴る', '～と鳴る')
+            contents = contents.replace('逆帆を食う', '～を食う')
+            contents = contents.replace('酒虫が起る', '～が起る')
+            contents = contents.replace('避くべき事', '～事')
+            contents = contents.replace('探り足で行く', '～で行く')
+            contents = contents.replace('差しぐむ涙', '～涙')
+            contents = contents.replace('砂上の楼閣/ロウカク/', '～の楼閣/ロウカク/')
+            contents = contents.replace('札びらを切る', '～を切る')
+            contents = contents.replace('薩摩守を決めこむ', '～を決めこむ')
+            contents = contents.replace('里腹三日/サンニチ/', '里腹三日')
+            contents = contents.replace('Ма-Хан</i> 馬韓, <i>Пйон-Хан</i> 弁韓 <i>и Син-Хан</i> 辰韓; <i>',
+                                        'Ма-Хан, Пйон-Хан и Син-Хан; ')
+            contents = contents.replace('三顧の礼をとる', '～の礼をとる')
+            contents = contents.replace('三舟の才', '～の才')
+            contents = contents.replace('三寸の舌/シタ/を振う', '～の舌/シタ/を振う')
+            contents = contents.replace('三船の才', '～の才')
+            contents = contents.replace('【三舟】(の才)', '【三舟】(の才)')
+            contents = contents.replace('酸鼻を極めた', '～を極めた')
+            contents = contents.replace('ざくりと包丁を入れる', '～と包丁を入れる')
+            contents = contents.replace('ざぶりと湯に入/ハイ/る', '～[と]湯に入/ハイ/る')
+            contents = contents.replace('ざぶんと飛び込む', '～[と]飛び込む')
+            contents = contents.replace('匹股を踏む', '～を踏む')
+            contents = contents.replace('獅子奮迅の勢いで', '～の勢で')
+            contents = contents.replace('七分の二', '～の二')
+            contents = contents.replace('七歩の才/サイ/', '～の才')
+            contents = contents.replace('しめこの兔/ウサギ/', '～の兔')
+            contents = contents.replace('(歩) ', '')
+            contents = contents.replace('社稷の臣', '～の臣')
+            contents = contents.replace('しゃっちょこ立ちしても及ばない', '～しても及ばない')
+            contents = contents.replace('…は宗旨違いだ', '…は～だ')
+            contents = contents.replace('首鼠両端を持/ジ/す', '～両端を持/ジ/す')
+            contents = contents.replace('出処進退を誤らず', '～を誤らず')
+            contents = contents.replace('出藍の誉/ホマレ/がある', '～の誉/ホマレ/がある')
+            contents = contents.replace('しらを切る', '～を切る')
+            contents = contents.replace('尻居に倒れる', '～に倒れる')
+            contents = contents.replace('尻馬に乗る', '～に乗る')
+            contents = contents.replace('尻餅をつく', '～をつく')
+            contents = contents.replace('心身にこたえる', '～にこたえる')
+            contents = contents.replace('自家薬籠中の物とする', '～の物とする')
+            contents = contents.replace('自成の人', '～の人')
+            contents = contents.replace('地団駄[を]踏む', '～[を]踏む')
+            contents = contents.replace('自知の明/メイ/がある', '～の明/メイ/がある')
+            contents = contents.replace('事務系統の職員(従業員)', '～の職員, ～の従業員')
+            contents = contents.replace('十中の八九まで', '～の八九まで')
+            contents = contents.replace('…の術中に陥る', '…の～に陥る')
+            contents = contents.replace('…のため寿盃を挙げる', '…のため～を挙げる')
+            contents = contents.replace('順風満帆のうち', '～のうち')
+            contents = contents.replace('上巳の節句/セック/', '～の節句/セック/')
+            contents = contents.replace('冗談事じゃない', '～じゃない')
+            contents = contents.replace('人後に落ちない', '～に落ちない')
+            contents = contents.replace('水魚の交わり', '～の交わり')
+            contents = contents.replace('すいすい[と]飛ぶ', '～[と]飛ぶ')
+            contents = contents.replace('陬遠の地', '～の地')
+            contents = contents.replace('趨否を決する', '～を決する')
+            contents = contents.replace('好き合って夫婦になる', '～夫婦になる')
+            contents = contents.replace('すってんころりんと転ぶ', '～転ぶ')
+            contents = contents.replace('すとんところぶ', '～ころぶ')
+            contents = contents.replace('住心地のよい', '～のよい')
+            contents = contents.replace('擦れ違いに行き過ぎる', '～に行き過ぎる')
+            contents = contents.replace('座り心地がいい', '～がいい')
+            contents = contents.replace('寸々に切る', '～に切る')
+            contents = contents.replace('ずぶりと刺す', '～[と]刺す')
+            contents = contents.replace('ずぶ六に酔う(なる)', '～に酔う, ～になる')
+            contents = contents.replace('ずるりと落ちる', '～と落ちる')
+            contents = contents.replace('臍下丹田に力を入れる', '～に力を入れる')
+            contents = contents.replace('生殺与奪の権', '～の権')
+            contents = contents.replace('生死不明の人', '～の人')
+            contents = contents.replace('政治家肌の人', '～の人')
+            contents = contents.replace('聖聞に達する', '～に達する')
+            contents = contents.replace('世外に起然とする', '～に起然とする')
+            contents = contents.replace('尺寸の地 ', '～の地 ')
+            contents = contents.replace('潜航艇式の遣り方', '～の遣り方')
+            contents = contents.replace('千仞の谷', '～の谷')
+            contents = contents.replace('先鞭を着ける', '～を着ける')
+            contents = contents.replace('; <i>напр.</i> 眼科専門医 офтальмолог', '')
+            contents = contents.replace('贅沢三昧に暮す', '～に暮す')
+            contents = contents.replace('漸を追(逐)って', '～追(逐)って')
+            contents = contents.replace('…に全人格を傾倒する', '…に～を傾倒する')
+            contents = contents.replace('禅門に入/ハイ/る', '～に入/ハイ/る')
+            contents = contents.replace('前略[御免下さい]', '～[御免下さい]')
+            contents = contents.replace('箏の琴/コト/', '～の琴/コト/')
+            contents = contents.replace('…が捜査線上に現われる(浮ぶ)', '…が～に現われる, …が～に浮ぶ')
+            contents = contents.replace('壮士風の男', '～の男')
+            contents = contents.replace('宋襄の仁/ジン/', '～の仁/ジン/')
+            contents = contents.replace('鏘然として鳴る', '～として鳴る')
+            contents = contents.replace('総ルビの本', '～の本')
+            contents = contents.replace('足労をかける', '～をかける')
+            contents = contents.replace('外八文字を切る', '～を切る')
+            contents = contents.replace('俗耳に入/イ/る', '～に入/イ/る')
+            contents = contents.replace('高あぐらをかく', '～をかく')
+            contents = contents.replace('…は高手小手に縛られた', '…は～に縛られた')
+            contents = contents.replace('高見の見物をする', '～の見物をする')
+            contents = contents.replace('田毎の月/ツキ/', '～の月')
+            contents = contents.replace('多士済々/セイセイ/', '～済々/セイセイ/')
+            contents = contents.replace('立ち竦みの状態である', '～の状態である')
+            contents = contents.replace('…の中/ウチ/に立ち交る', '…の中/ウチ/に～')
+            contents = contents.replace('酒は憂/ウレ/いの玉ぼうき', '酒は憂いの玉ぼうき')
+            contents = contents.replace('太郎と花子/ハナコ/', '太郎と花子')
+            contents = contents.replace('大尽風を吹かす', '～を吹かす')
+            contents = contents.replace(' 大阪毎日[新聞]', '')
+            contents = contents.replace('…に卵を抱かす', '…に卵を～')
+            contents = contents.replace('出しっ放しにして置く', '～にして置く')
+            contents = contents.replace('脱兔の如く', '～の如く')
+            contents = contents.replace('だらしがない', '～がない')
+            contents = contents.replace(' (<i>не смешивать с формой связки</i> だ)', '')
+            contents = contents.replace('弾丸黒子の地', '～の地')
+            contents = contents.replace('断腸の思いがする', '～の思いがする')
+            contents = contents.replace('千鳥形に進む', '～に進む')
+            contents = contents.replace('ちゃきちゃきはさむ', '～はさむ')
+            contents = contents.replace('ちゃっかりしている', '～している')
+            contents = contents.replace('茶屋酒の味を覚える', '～の味を覚える')
+            contents = contents.replace('超然主義を取る', '～を取る')
+            contents = contents.replace('頂門の一針', '～の一針')
+            contents = contents.replace('直情径行型の人', '～の人')
+            contents = contents.replace('ちょこんと木に止まる', '～木に止まる')
+            contents = contents.replace('ちょっかいを出す', '～を出す')
+            contents = contents.replace('…の枕席に侍/ジ/す', '…の～に侍/ジ/す')
+            contents = contents.replace(
+                '<i>(слово-каламбур, основанное на том, что иероглиф</i> 百 <i>без верхней черты, т. е. 100 '
+                'минус 1, имеет вид</i> 白 <i>«белый»)</i>', '')
+            contents = contents.replace('(妻 <i>здесь заменяет</i> 爪)', '')
+            contents = contents.replace('強腰に出る', '～に出る')
+            contents = contents.replace('手置きが悪い', '～が悪い')
+            contents = contents.replace('敵影を認めず, 敵影無し', '～を認めず, ～無し')
+            contents = contents.replace('てくで歩く', '～で歩く')
+            contents = contents.replace('てくてく歩く', '～歩く')
+            contents = contents.replace('手ぐすねを引く, 手ぐすねを引いて待っている', '～を引く, ～を引いて待っている')
+            contents = contents.replace('手玉に取る', '～に取る')
+            contents = contents.replace('鉄火肌の女', '～の女')
+            contents = contents.replace('轍鮒の急', '～の急')
+            contents = contents.replace('手鼻をかむ', '～をかむ')
+            contents = contents.replace('天金の本', '～の本')
+            contents = contents.replace('椽大の筆を揮う', '～の筆を揮う')
+            contents = contents.replace(
+                '<i>(напр.</i> お <i>иероглифа</i> 悪 <i>в знач. «ненависть» при более частом</i> あく <i>в '
+                'знач. «зло»)</i>', '')
+            contents = contents.replace('天聴に達する', '～に達する')
+            contents = contents.replace('陶然と酔う', '～と酔う')
+            contents = contents.replace('刀筆の吏', '～の吏')
+            contents = contents.replace('遠耳が利く', '～が利く')
+            contents = contents.replace('年甲斐も無い', '～も無い')
+            contents = contents.replace('とっぽいやつ', '～やつ')
+            contents = contents.replace('飛び切りをやる', '～をやる')
+            contents = contents.replace('同学の友', '～の友')
+            contents = contents.replace('同姓同名の人', '～の人')
+            contents = contents.replace('同体に落ちる', '～に落ちる')
+            contents = contents.replace('どうと倒れる', '～倒れる')
+            contents = contents.replace('道徳堅固の人', '～の人')
+            contents = contents.replace('どかんと落ちる', '～落ちる')
+            contents = contents.replace('度外して置く', '～して置く')
+            contents = contents.replace('独酌で飲む', '～で飲む')
+            contents = contents.replace('…の毒手にかかる', '…の～にかかる')
+            contents = contents.replace('…の毒刃に倒れる', '…の～に倒れる')
+            contents = contents.replace('どじを踏む', '～を踏む')
+            contents = contents.replace('どでん買越/カイコ/す(うりこす)', '～買越/カイコ/す, ～うりこす')
+            contents = contents.replace('怒髪天を突く', '～天を突く')
+            contents = contents.replace('どぶんと落ちる', '～落ちる')
+            contents = contents.replace('どろんを決める', '～を決める')
+            contents = contents.replace('内顧の憂い(煩い)', '～の憂い, ～の煩い')
+            contents = contents.replace('長葉の石持草/イシモチソー/', '～の石持草/イシモチソー/')
+            contents = contents.replace('亡き数に入/ハイ/る', '～に入/ハイ/る')
+            contents = contents.replace('泣き通しに泣く', '～に泣く')
+            contents = contents.replace('慰めようもなく, 慰めようもないほど', '～もなく, ～もないほど')
+            contents = contents.replace('名乗りをあげる', '～をあげる')
+            contents = contents.replace('生爪をはがす', '～をはがす')
+            contents = contents.replace('南山の寿', '～の寿')
+            contents = contents.replace('難中の難事', '～の難事')
+            contents = contents.replace('苦味走った顔付', '～顔付')
+            contents = contents.replace('…を憎からず思う', '…を～思う')
+            contents = contents.replace('二軒建の家', '～の家')
+            contents = contents.replace('二三分の所である', '～の所である')
+            contents = contents.replace(': 両', '')
+            contents = contents.replace('似たり寄ったりだ', '～だ')
+            contents = contents.replace('にっと笑う', '～笑う')
+            contents = contents.replace('二本差しの武士', '～の武士')
+            contents = contents.replace('二枚開きの戸', '～の戸')
+            contents = contents.replace('入御あらせられる', '～あらせられる')
+            contents = contents.replace('忍の一字', '～の一字')
+            contents = contents.replace('根上がりの松', '～の松')
+            contents = contents.replace('猫糞を極める', '～を極める')
+            contents = contents.replace('寝酒を飲む', '～を飲む')
+            contents = contents.replace('寝待ちの月', '～の月')
+            contents = contents.replace('寝耳に水', '～に水')
+            contents = contents.replace('のっぺりした顔', '～した顔')
+            contents = contents.replace('背汗の至りです', '～の至りです')
+            contents = contents.replace('背水の陣/ジン/を布く', '～の陣/ジン/を布く')
+            contents = contents.replace('白玉楼中の人となる', '～の人となる')
+            contents = contents.replace(
+                ' (<i>напр. слоги</i> の <i>и</i> さ <i>в</i> ぼくのつくえ(樸の机) <i>будет</i> ぼノサくのつノサくえ)', '')
+            contents = contents.replace('果たせるかな', '～かな')
+            contents = contents.replace('八掛けで卸す', '～で卸す')
+            contents = contents.replace('八字の眉', '～の眉')
+            contents = contents.replace(
+                '(<i>букв.</i> 8½ ри, <i>слово-каламбур: жареный батат по вкусу похож на каштан (по-японски '
+                '— кури), а слово «кури» можно фонетически написать знаками</i> 九里, <i>что значит «девять ри»; но так '
+                'как батат всё же не каштан, то он «8½ ри»</i>)', '')
+            contents = contents.replace(
+                '(<i>первые четыре см.</i> <a href="#004-67-90">しく【四苦】</a>, <i>плюс муки разлуки любящих</i> '
+                '愛別離/アイベツリ/; <i>встречи с ненавистью</i> 怨憎会/オンゾウエ/, <i>неисполнения желаний</i> 求不得/クフトク/, '
+                '<i>расцвета духовных способностей</i> 五陰盛/ゴオンジョウ/)',
+                '(<i>первые четыре плюс муки разлуки любящих, встречи с ненавистью, неисполнения желаний, '
+                'расцвета духовных способностей</i>)')
+            contents = contents.replace('八色の姓/カバネ/', '～の姓/カバネ/')
+            contents = contents.replace(' (真人/マヒト/, 朝臣/アソミ/, 宿爾/スクネ/, 忌寸/イミキ/, 道師/ミチノシ/, 臣/オミ/, 連/ムラジ/, 稲置/イナギ/)', '')
+            contents = contents.replace('(<i>китайской медицины, см.</i> <a href="#004-13-59">よもぎ</a>, '
+                                        '<a href="#007-20-64">くまつづら</a>, <a href="#005-63-47">おうばこ</a>, <a href="#007-73-25">おなもみ</a>, '
+                                        '<a href="#003-02-17">しょうぶ【菖蒲】</a>, <a href="#000-62-80">すいかずら</a>, <a href="#000-08-32">はこべ</a>, '
+                                        '<a href="#008-74-72">はす【蓮】</a>, <i>однако при перечислении этих трав</i> はす <i>пишется</i> 荷葉)',
+                                        '(<i>китайской медицины</i>)')
+            contents = contents.replace('はったりを行う', '～を行う')
+            contents = contents.replace('はっと思う ', '～思う ')
+            contents = contents.replace('八方美人型の性格', '～の性格')
+            contents = contents.replace('…は初耳だ', '…は～だ')
+            contents = contents.replace('話し半分に聞く', '～に聞く')
+            contents = contents.replace('鼻持ちがならない', '～がならない')
+            contents = contents.replace('腹塞ぎに食べる', '～に食べる')
+            contents = contents.replace('; напр.</i> 弓二張/ユミフタハリ/ два лука', '')
+            contents = contents.replace('半堅気な女', '～な女')
+            contents = contents.replace('繁簡よろしきを得た', '～よろしきを得た')
+            contents = contents.replace('半眼で見る', '～で見る')
+            contents = contents.replace(' (パ, ピ, プ, ぺ, ポ)', '')
+            contents = contents.replace('半身に構える', '～に構える')
+            contents = contents.replace('売文の徒', '～の徒')
+            contents = contents.replace('抜山蓋世の勇がある', '～の勇がある')
+            contents = contents.replace('荊棘がきに引っかく', '～に引っかく')
+            contents = contents.replace('万止むを得なければ', '～止むを得なければ')
+            contents = contents.replace('万斛の涙を注ぐ', '～の涙を注ぐ')
+            contents = contents.replace('万仭の谷', '～の谷')
+            contents = contents.replace('晩節を全うする', '～を全うする')
+            contents = contents.replace('万籟絶/タ/ゆ', '～絶/タ/ゆ')
+            contents = contents.replace('万緑叢中の紅一点', '～中の紅一点')
+            contents = contents.replace('贔屓目に見る', '～に見る')
+            contents = contents.replace('非業の死(最期)を遂げる', '～の死(最期)を遂げる')
+            contents = contents.replace('非業消滅のため', '～のため')
+            contents = contents.replace('直押しに押し寄せる', '～に押し寄せる')
+            contents = contents.replace('ひた走りに走る', '～に走る')
+            contents = contents.replace('左団扇で暮らす', '～で暮らす')
+            contents = contents.replace('必死必中の武器', '～の武器')
+            contents = contents.replace('筆誅を加える', '～を加える')
+            contents = contents.replace('筆陣を張る', '～を張る')
+            contents = contents.replace('一泡吹かせてやる', '～吹かせてやる')
+            contents = contents.replace('一芝居を打つ', '～を打つ')
+            contents = contents.replace('人好きのいい', '～のいい')
+            contents = contents.replace('人好きのわるい', '～のわるい')
+            contents = contents.replace('一堪りもなく', '～もなく')
+            contents = contents.replace('人っ子ひとり見えない(いない)', '～ひとり見えない(いない)')
+            contents = contents.replace('一照り照ると', '～照ると')
+            contents = contents.replace('一肌脱/ヌ/ぐ', '～脱/ヌ/ぐ')
+            contents = contents.replace('ひと降りほしいですね', '～ほしいですね')
+            contents = contents.replace('独り言を言う', '～を言う')
+            contents = contents.replace('独り佳居で暮らす', '～で暮らす')
+            contents = contents.replace('霏々として降る', '～として降る')
+            contents = contents.replace('百聞一見に如/シ/かず', '百聞一見に如かず')
+            contents = contents.replace('百万台に達する', '～に達する')
+            contents = contents.replace('百味の飲食', '～の飲食')
+            contents = contents.replace('飆々と鳴る', '～と鳴る')
+            contents = contents.replace('表裏反覆常/ツネ/がない', '～常/ツネ/がない')
+            contents = contents.replace('ひんひん啼く', '～啼く')
+            contents = contents.replace('びくともしない', '～ともしない')
+            contents = contents.replace('廟堂に立つ', '～に立つ')
+            contents = contents.replace('屛風倒しに倒れる', '～に倒れる')
+            contents = contents.replace('ぴょこんと頭を下げる', '～頭を下げる')
+            contents = contents.replace('ぴょんと跳ぶ', '～跳ぶ')
+            contents = contents.replace('ぴょんぴょん跳ぶ', '～跳ぶ')
+            contents = contents.replace('ぴよぴよ鳴く', '～鳴く')
+            contents = contents.replace('風声鶴嗅に驚く', '～に驚く')
+            contents = contents.replace('風前の灯(灯火)', '～の灯(灯火)')
+            contents = contents.replace('深爪を切る', '～を切る')
+            contents = contents.replace('不帰の客となる', '～の客となる')
+            contents = contents.replace('不許複製', '～複製')
+            contents = contents.replace('俯仰天地に愧じず(恥ずる所がない)', '～天地に愧じず, ～天地に恥ずる所がない')
+            contents = contents.replace('不拘留のまま検束される', '～のまま検束される')
+            contents = contents.replace(', <i>напр.</i> 二千/フタセン/三百 две тысячи триста', '')
+            contents = contents.replace('二桁の数', '～の数')
+            contents = contents.replace('二手に別れる', '～に別れる')
+            contents = contents.replace('二目と見られない[ような]', '～と見られない[ような]')
+            contents = contents.replace('…に足を踏みかける', '…に足を～')
+            contents = contents.replace('不問に付する', '～に付する')
+            contents = contents.replace('…降りみ降らずみ雨が絶えず', '～雨が絶えず')
+            contents = contents.replace('踏ん切りがつかない', '～がつかない')
+            contents = contents.replace('不精髭を生やしている', '～を生やしている')
+            contents = contents.replace('物質不滅の法則', '～の法則')
+            contents = contents.replace('物質保存の原理', '～の原理')
+            contents = contents.replace('ぶつくさ言う', '～言う')
+            contents = contents.replace('炳として日月の如し', '～として日月の如し')
+            contents = contents.replace(
+                ' へへ <i>брови</i>, のの <i>глаза</i>, も <i>нос</i>, へ <i>рот</i>, じ <i>овал лица)</i>',
+                ')')
+            contents = contents.replace('へへののもへじの生徒', '～の生徒')
+            contents = contents.replace('へべれけに酔う', '～に酔う')
+            contents = contents.replace('一臂の力を貸す', '～の力を貸す')
+            contents = contents.replace('…は未だしという所がある', '…は～という所がある')
+            contents = contents.replace('魚心あれば水心/ミズゴコロ/', '～あれば水心/ミズゴコロ/')
+            contents = contents.replace('打出の小槌', '～の小槌')
+            contents = contents.replace('売言葉に買い言葉', '～に買い言葉')
+            contents = contents.replace('叡聞に達する', '～に達する')
+            contents = contents.replace('鸚鵡返しに言う', '～に言う')
+            contents = contents.replace('哀々禁ぜず', '～禁ぜず')
+            contents = contents.replace('意気衝天の概がある', '～の概がある')
+            contents = contents.replace('いたずら盛りの年頃', '～の年頃')
+            contents = contents.replace('一寸試し五分試めしにする', '～五分試めしにする')
+            contents = contents.replace('一桃腐りて百桃/ヒャクトウ/損ず', '一桃腐りて百桃損ず')
+            contents = contents.replace('お手数ながら', '～ながら')
+            contents = contents.replace('親風を吹かせる', '～を吹かせる')
+            contents = contents.replace('会稽の恥をそそぐ', '～の恥をそそぐ')
+            contents = contents.replace('海陸両棲の動物', '～の動物')
+            contents = contents.replace('隔日発作のおこり', '～のおこり')
+            contents = contents.replace('籠抜け[詐欺]を働く', '～[詐欺]を働く')
+            contents = contents.replace('家庭型の女', '～の女')
+            contents = contents.replace('下風に立つ', '～に立つ')
+            contents = contents.replace('べそをかく', '～をかく')
+            contents = contents.replace('捧刀の礼', '～の礼')
+            contents = contents.replace('ほんこでめんこをする', '～でめんこをする')
+            contents = contents.replace('本腹の子', '～の子')
+            contents = contents.replace('忙中の閑 ', '～の閑 ')
+            contents = contents.replace('; <i>ср.</i> にょうぼさつ', '')
+            contents = contents.replace('ぼたりと落ちた', '～と落ちた')
+            contents = contents.replace('ぼちゃんと飛び込む', '～と飛び込む')
+            contents = contents.replace('ぼってり太った', '～太った')
+            contents = contents.replace('凡慮の及ぶ所でない', '～の及ぶ所でない')
+            contents = contents.replace('前先が見えない', '～が見えない')
+            contents = contents.replace('目蔭をさす', '～をさす')
+            contents = contents.replace('紛う方なき', '～方/こと/なき')
+            contents = contents.replace('まじまじ[と]見る', '～[と]見る')
+            contents = contents.replace('末筆ながら', '～ながら')
+            contents = contents.replace('まんじりともしない', '～ともしない')
+            contents = contents.replace('見極めのつかぬ', '～のつかぬ')
+            contents = contents.replace('右枕に寝る', '～に寝る')
+            contents = contents.replace('身ぐるみはぎとられる', '～はぎとられる')
+            contents = contents.replace('三桁の数', '～の数')
+            contents = contents.replace('見だてがない', '～がない')
+            contents = contents.replace('三つ巴の争い(混戦)', '～の争い, ～の混戦')
+            contents = contents.replace('身分相応に暮らす(やって行く)', '～に暮らす, ～やって行く')
+            contents = contents.replace('無可有の郷/サト/', '～の郷/サト/')
+            contents = contents.replace('向かっ腹を立てる', '～を立てる')
+            contents = contents.replace('無原罪の御宿/オヤド/', '～の御宿/オヤド/')
+            contents = contents.replace('無駄飯を食う', '～を食う')
+            contents = contents.replace('胸三寸に納める', '～に納める')
+            contents = contents.replace('盲打ちに打つ', '～に打つ')
+            contents = contents.replace('盲撃ちに撃つ', '～に撃つ')
+            contents = contents.replace('盲判を押す', '～を押す')
+            contents = contents.replace('目覚め勝ちの一夜を過ごす', '～の一夜を過ごす')
+            contents = contents.replace('目潰しを食わせる, 目潰しに…を投げる', '～を食わせる, ～に…を投げる')
+            contents = contents.replace('目端がきく', '～がきく')
+            contents = contents.replace('めらめら燃え上がる', '～燃え上がる')
+            contents = contents.replace('もうと鳴く', '～と鳴く')
+            contents = contents.replace('…の話で持ち切りだった', '…の話で～だった')
+            contents = contents.replace('…に身を持ち崩す', '…に身を～')
+            contents = contents.replace('勿怪の幸', '～の幸')
+            contents = contents.replace('本立ちのよい', '～のよい')
+            contents = contents.replace('諸肌を脱ぐ(脱いでいる)', '～を脱ぐ(脱いでいる)')
+            contents = contents.replace('門前雀羅を張る', '～を張る')
+            contents = contents.replace('薬石効/コウ/なく', '～効/コウ/なく')
+            contents = contents.replace('役人風を吹かす', '～を吹かす')
+            contents = contents.replace('自暴酒をあふる', '～をあふる')
+            contents = contents.replace('八又の大蛇/オロチ/', '～の大蛇/オロチ/')
+            contents = contents.replace('湯気にあたる', '～にあたる')
+            contents = contents.replace('夢聊 <i>с отриц.</i>', '<i>с отриц.</i>')
+            contents = contents.replace('夢聊も忘れない', '～も忘れない')
+            contents = contents.replace('夢枕に立つ', '～に立つ')
+            contents = contents.replace('俑を作る', '～を作る')
+            contents = contents.replace('様です(だ)', '～です(だ)')
+            contents = contents.replace('よう[御座います]', '～[御座います]')
+            contents = contents.replace('よくせきの事で', '～の事で')
+            contents = contents.replace('横車を押す', '～を押す')
+            contents = contents.replace('横抱きにかかえる', '～にかかえる')
+            contents = contents.replace('横手を打つ', '～を打つ')
+            contents = contents.replace('横飛びに飛んでゆく', '～に飛んでゆく')
+            contents = contents.replace('横隣りの人', '～人')
+            contents = contents.replace('横薙ぎに払う', '～に払う')
+            contents = contents.replace('…由です', '…～です')
+            contents = contents.replace('由ある ', '～ある ')
+            contents = contents.replace('由ある人', '～ある人')
+            contents = contents.replace('余憤を漏らす', '～を漏らす')
+            contents = contents.replace('寄辺なぎさの捨小舟/ステコブネ/', '～の捨小舟/ステコブネ/')
+            contents = contents.replace('埒外に出る', '～に出る')
+            contents = contents.replace(
+                '<i>(в древнем Китае:</i> 礼 <i>нормы общественного поведения</i>, 楽 <i>музыка</i>, 射 <i>стрельба из лука</i>, 御/ギョ/ <i>управление колесницей</i>, 書 <i>письмо</i>, 数 <i>счёт)</i>',
+                '<i>(в древнем Китае: нормы общественного поведения, музыка, стрельба из лука, управление колесницей, письмо, счёт)')
+            contents = contents.replace('陸路[を通って]', '～[を通って]')
+            contents = contents.replace('立錐の余地もない', '～の余地もない')
+            contents = contents.replace('両袖付の机', '～の机')
+            contents = contents.replace('りーんと呼鈴を鳴らす', '～と呼鈴を鳴らす')
+            contents = contents.replace('老残の身', '～の身')
+            contents = contents.replace('論陣を張る', '～を張る')
+            contents = contents.replace('論歩を進める', '～を進める')
+            contents = contents.replace(' (<i>ср.</i> あんか【案下】, <a href="#001-61-23">おんちゅう【御中】</a>)', '')
+            contents = contents.replace('和局を結ぶ', '～を結ぶ')
+            contents = contents.replace('わなわな震える', '～震える')
+            contents = contents.replace('インキ止の紙', '～の紙')
+            contents = contents.replace('カメラ顔のいい', '～のいい')
+            contents = contents.replace('(<i>букв.</i> с отметкой «ки», <i>сокр.</i> китигаи 気違い)',
+                                        '(<i>букв.</i> с отметкой «ки», <i>сокр.</i> 気違い)')
+            contents = contents.replace('ジェスチャーまじりの話しぶり', '～の話しぶり')
+            contents = contents.replace('(ストリキニン <i>англ.</i> strychnin, ストリキニーネ <i>голл.</i> strychnine)',
+                                        '(<i>от англ.</i> strychnin, <i>голл.</i> strychnine)')
+            contents = contents.replace('タイム・アップだ', '～だ')
+            contents = contents.replace('てくしーで行く', '～で行く')
+            contents = contents.replace('ヌーボー式の人', '～の人')
+            contents = contents.replace('バベルの塔', '～の塔')
+            contents = contents.replace('ビキニの灰/ハイ/', '～の灰/ハイ/')
+            contents = contents.replace('フォールに持ち込む', '～に持ち込む')
+            contents = contents.replace('ホーム・ルーム指導教師', '～指導教師')
+            contents = contents.replace('(<i>кит.</i> мэй фацзы 没法子)', '(<i>кит.</i> 没法子 [мэй фацзы])')
+            contents = contents.replace(
+                ' (<i>слово-каламбур, основанное на графическом разложении иероглифа</i> 只 тада)', '')
+            contents = contents.replace(
+                ' (<i>прост. слово-каламбур — прочтённый по частям иероглиф</i> 頗, <i>см.</i> <a href="#002-34-54">すこぶる</a>)',
+                '')
+            contents = contents.replace('があがあ鳴く', '～鳴く')
+            contents = contents.replace('がぶがぶ飲む', '～飲む')
+            contents = contents.replace('がらんがらんと鳴る', '～と鳴る')
+            contents = contents.replace('菊水の紋', '～の紋')
+            contents = contents.replace(
+                ' <i>(поскольку иероглифы</i> 七十七 <i>в скорописном написании похожи на иероглиф</i> 喜, <i>написанный тоже скорописью)</i>',
+                '')
+            contents = contents.replace('鬼籍に入/ハイ/る', '～に入/ハイ/る')
+            contents = contents.replace('きゃんきゃん鳴く', '～鳴く')
+            contents = contents.replace('旧遊の地', '～の地')
+            contents = contents.replace('狭斜の巷', '～の巷')
+            contents = contents.replace('響板のエゾ', '～のエゾ')
+            contents = contents.replace('器量好みの人', '～の人')
+            contents = contents.replace('錦上更に花を添える', '～更に花を添える')
+            contents = contents.replace('義師を起す', '～を起す')
+            contents = contents.replace('ぎょっだね', '～だね')
+            contents = contents.replace('苦汁をなめる', '～をなめる')
+            contents = contents.replace('汲み立ての水', '～の水')
+            contents = contents.replace('ぐうの音 ', '～の音/ね/ ')
+            contents = contents.replace('化粧くずれを直す', '～を直す')
+            contents = contents.replace('欠を補う', '～を補う')
+            contents = contents.replace('拳匪の乱', '～の乱')
+            contents = contents.replace('げらげら笑う', '～笑う')
+            contents = contents.replace('口角泡/アワ/を飛ばして', '～泡/アワ/を飛ばして')
+            contents = contents.replace('哄然と笑う', '～と笑う')
+            contents = contents.replace('巧遅は拙速に如/シ/かず', '巧遅は拙速に如かず')
+            contents = contents.replace('口辺に微笑をたたえて', '～に微笑をたたえて')
+            contents = contents.replace('小首をかしげる(傾ける, ひねる)', '～をかしげる, ～を傾ける, ～をひねる')
+            contents = contents.replace('心待ちに待つ', '～に待つ')
+            contents = contents.replace('滑稽交じりに話す', '～に話す')
+            contents = contents.replace('<i>форма</i> なさい <i>в женской речи, см.</i> <a href="#006-93-67">なさい</a>',
+                                        '<i>в женской речи</i> <i>см.</i> <a href="#006-93-67">なさい</a>')
+            contents = contents.replace('両極端は相会す', '＝両極端は～す')
+            contents = contents.replace('顔を赤らめる', '＝顔を～')
+            contents = contents.replace('夜の明け抜けに', '＝夜の～に')
+            contents = contents.replace('どうぞ悪しからず[思って下さい]', '＝どうぞ～[思って下さい]')
+            contents = contents.replace('二人は熱々だ', '＝二人は～だ')
+            contents = contents.replace('疑心暗鬼を生ず', '＝疑心～を生ず')
+            contents = contents.replace('故人遺愛の', '＝故人～の')
+            contents = contents.replace('夫婦は異身同体である', '＝夫婦は～である')
+            contents = contents.replace('[打って]一丸とする', '＝[打って]～とする')
+            contents = contents.replace('赤ん坊にいないいないばーをやって見る', '＝赤ん坊に～をやって見る')
+            contents = contents.replace(' 得意の鼻をうごめかす', ' ＝得意の鼻を～')
+            contents = contents.replace('一点の打処もない', '＝一点の～もない')
+            contents = contents.replace('顔を俯向ける', '＝顔を～')
+            contents = contents.replace('時を得顔に振舞う', '＝時を～に振舞う')
+            contents = contents.replace('そんなことがあるかしら！あるとも、あるとも大ありだ', '＝そんなことがあるかしら！あるとも、あるとも～')
+            contents = contents.replace('子供のお仕置き', '＝子供の～')
+            contents = contents.replace('これでおつもりだよ', '＝これで～だよ')
+            contents = contents.replace('人口に膾炙する', '＝人口に～する')
+            contents = contents.replace('意に介する', '＝意に～')
+            contents = contents.replace('涙に掻き暮れる', '＝涙に～')
+            contents = contents.replace('御加餐を祈る', '＝御～を祈る')
+            contents = contents.replace('鼻をかむ', '＝鼻を～')
+            contents = contents.replace('声を嗄らす', '＝声を～')
+            contents = contents.replace('世は刈菰と乱れた', '＝世は～と乱れた')
+            contents = contents.replace('声が嗄れる ', '＝声が～ ')
+            contents = contents.replace('犬の川端歩き', '＝犬の～')
+            contents = contents.replace('酒の燗をする(付ける)', '＝酒の～をする(付ける)')
+            contents = contents.replace('事務を簡捷にする', '＝事務を～にする')
+            contents = contents.replace('生死の関頭に立つ', '＝生死の～に立つ')
+            contents = contents.replace('もう堪忍袋の緒が切れた', '＝もう～の緒/お/が切れた')
+            contents = contents.replace('それが聞き納めだった', '＝それが～だった')
+            contents = contents.replace('妙な気先が動いて', '＝妙な～が動いて')
+            contents = contents.replace('私は着た切り雀だ', '＝私は～だ')
+            contents = contents.replace('万事休す', '＝万事～')
+            contents = contents.replace('半/ナカバ/香落ちで指す', '＝半/ナカバ/～で指す')
+            contents = contents.replace('毛の癖直しをする', '＝毛の～をする')
+            contents = contents.replace('彼は糞落着きに落着いている', '＝彼は～に落着いている')
+            contents = contents.replace('日が暮れなずむ', '＝日が～')
+            contents = contents.replace('鹿児島くんだりへ行く', '＝鹿児島～へ行く')
+            contents = contents.replace('獅子の子落とし', '＝獅子の～')
+            contents = contents.replace('風邪を拗らす', '＝風邪を～')
+            contents = contents.replace('家/イエ/の子郎党', '＝家/イエ/の～')
+            contents = contents.replace('小刀を逆手に持つ(取る)', '＝小刀を～に持つ(取る)')
+            contents = contents.replace('言うも更なり', '＝言うも～')
+            contents = contents.replace('日/ヒ/既に三竿', '＝日/ヒ/既に～')
+            contents = contents.replace('舌にざらつく', '＝舌に～')
+            contents = contents.replace('顔を顰める', '＝顔を～')
+            contents = contents.replace('身に泌み感じる', '＝身に～')
+            contents = contents.replace('夜は深々と更けて行く', '＝夜は～と更けて行く')
+            contents = contents.replace('その言は今もなお耳底にある', '＝その言は今もなお～にある')
+            contents = contents.replace('うんともすんとも言わない не сказать', '＝うんとも～とも言わない не сказать')
+            contents = contents.replace('うんともすんとも言わない не ответить', '～ともすんとも言わない не ответить')
+            contents = contents.replace('面/ツラ/の皮が千枚張りだ', '＝面/ツラ/の皮が～だ')
+            contents = contents.replace('模様を染め出す', '＝模様を～')
+            contents = contents.replace('風がそよそよ吹く', '＝風が～吹く')
+            contents = contents.replace('小便をたれる', '＝小便を～')
+            contents = contents.replace('そのたんびに', '＝その～に')
+            contents = contents.replace('不信任の弾劾案', '＝不信任の～')
+            contents = contents.replace('お使い立てをしまして申訳ありません', '＝お～をしまして申訳ありません')
+            contents = contents.replace('口を噤む', '＝口を～')
+            contents = contents.replace('五日付け[の]', '＝五日～[の]')
+            contents = contents.replace('権威づけの為に', '＝権威～の為に')
+            contents = contents.replace('目をつぶる', '＝目を～')
+            contents = contents.replace('酒を手酌で飲む', '＝酒を～で飲む')
+            contents = contents.replace('『済みません』てな事を言う', '＝『済みません』～事を言う')
+            contents = contents.replace('両刀を手挟む', '＝両刀を～')
+            contents = contents.replace('写真を摂る', '＝写真を～')
+            contents = contents.replace('最後の一周は彼の独走の観があった', '＝最後の一周は彼の～の観があった')
+            contents = contents.replace('二十円ドタを割る', '＝二十円～を割る')
+            contents = contents.replace('目を泣き潰す', '＝目を～')
+            contents = contents.replace('事も無げ', '＝事も～')
+            contents = contents.replace('思案の投げ首', '＝思案の～')
+            contents = contents.replace('髪をなで付けにする', '＝髪を～にする')
+            contents = contents.replace('怒ったのなんのって', '＝怒ったの～')
+            contents = contents.replace('犬の逃げ吠え', '＝犬の～')
+            contents = contents.replace('たけのこのようににょきにょき出ている', '＝たけのこのように～出ている')
+            contents = contents.replace('烏の濡羽色', '＝烏の～')
+            contents = contents.replace('一人乗りの', '＝一人～の')
+            contents = contents.replace('鯛の浜焼', '＝鯛の～')
+            contents = contents.replace('涙をふるって馬謖を斬る', '＝涙をふるって～を斬る')
+            contents = contents.replace('眼をぱちくりさせる', '＝眼/め/を～させる')
+            contents = contents.replace('夜の引き明けに', '＝夜の～に')
+            contents = contents.replace('贔屓の引き倒し', '＝贔屓の～')
+            contents = contents.replace('お膝繰りを願います', '＝お～を願います')
+            contents = contents.replace('ざっと(急いで)一風呂浴びる', '＝急いで(ざっと)～浴びる')
+            contents = contents.replace('屁を放る', '＝屁を～')
+            contents = contents.replace('水の中をびちゃびちゃ歩く', '＝水の中を～歩く')
+            contents = contents.replace('風がびゅうびゅう吹く', '＝風が～吹く')
+            contents = contents.replace('タバコを吹かす курить', '＝タバコを～ курить')
+            contents = contents.replace('夜/ヨル/を更かす', '＝夜を～')
+            contents = contents.replace('風の吹き回し', '＝風の～')
+            contents = contents.replace('裏面に伏在する', '＝裏面に～する')
+            contents = contents.replace('足を踏み入れる', '＝足を～')
+            contents = contents.replace('[足の]踏み所もない', '＝[足の]～もない')
+            contents = contents.replace('[足を]踏み外ずす', '＝[足を]～')
+            contents = contents.replace('気がふれる', '＝気が～')
+            contents = contents.replace('…の便をはかって', '…の～をはかって')
+            contents = contents.replace('用が便じる', '＝用が～')
+            contents = contents.replace('どうぞ御放念下さいますよう', '＝どうぞ御～下さいますよう')
+            contents = contents.replace('御母堂', '＝御～')
+            contents = contents.replace('帽子を目深に被る', '＝帽子を～に被る')
+            contents = contents.replace('鰯の味醂干し', '＝鰯の～')
+            contents = contents.replace('人にめいめい向き向きある', '＝人にめいめい～ある')
+            contents = contents.replace('あの店は儲け主義だ', '＝あの店は～だ')
+            contents = contents.replace('煙がもくもく[と]出る', '＝煙が～[と]出る')
+            contents = contents.replace(' 気の持ちよう', ' ＝気の～')
+            contents = contents.replace('袴の股立ちを高くとる', '＝袴の～を高くとる')
+            contents = contents.replace('八幡の藪知らず', '＝八幡/やわた/の～')
+            contents = contents.replace('髪の結い方', '＝髪の～')
+            contents = contents.replace('あの男は何事も行き当たりばったり主義だ', '＝あの男は何事も～だ')
+            contents = contents.replace('この本は読み出がない', '＝この本は～がない')
+            contents = contents.replace('人間は万物の霊長', '＝人間は万物～')
+            contents = contents.replace('彼は笑い上戸だ', '＝彼は～だ')
+            contents = contents.replace('彼は悪口屋だ', '＝彼は～だ')
+            contents = contents.replace('彼は悪擦れしている', '＝彼は～している')
+            contents = contents.replace('(<i>отриц. форма гл.</i> <a href="#006-14-76">しく【如く】</a>) ', '')
+            contents = contents.replace('大所高所から物を見る', '～から物を見る')
+            contents = contents.replace('<i>связ. кн. отриц. форма гл.</i>', '<i>кн. отриц. форма гл.</i>')
+            contents = contents.replace('(<i>с 1949 г., ср.</i> <a href="#007-97-88">ていだい【帝大】</a>)',
+                                        '(<i>с 1949 г.</i>)')
+            contents = contents.replace('夜が明け離れた', '＝夜が｜た～')
+            contents = contents.replace('捏ね交ぜて一つにした', '｜て～一つにした')
+            contents = contents.replace('身を挺して', '＝身を｜して～')
+            contents = contents.replace('取って付けた様な', '｜た～様な')
+            contents = contents.replace('…は両眼を泣き腫らしていた', '…は両眼を｜して～いた')
+            contents = contents.replace('…は記憶から拭い去られた', '…は記憶から｜られた～')
+            contents = contents.replace('羽/ハネ/の生え揃った', '＝羽/ハネ/の｜った～')
+            contents = contents.replace('罷り間違えば, 罷り間違っても', '｜えば～, ｜って～も')
+            contents = contents.replace('目に物見せてやる', '＝目に｜て～やる')
+            contents = contents.replace('<i>от</i> <a href="#001-55-99">ベースI 1</a> <i>и англ.</i> up',
+                                        '<i>от</i> ベース <i>и англ.</i> up')
+            contents = contents.replace('(<i>от</i> ごねる <i>и</i> 得 току)', '(<i>от</i> ごねる <i>и</i> 得)')
+            contents = contents.replace('(<i>от сокр.</i> мосурин モスリン)', '(<i>от сокр.</i> モスリン)')
+            contents = contents.replace('<i>связ.:</i> お待ち遠様/オマチドウサマ/[でした]',
+                                        '<i>связ.:</i> omachidousama 【お待ち遠様】 [deshita]')
+            contents = contents.replace(
+                '<i>побуд. залог гл.</i> つく【尽く】, <i>т. е. письменной формы гл.</i> <a href="#008-04-11">つきる</a>;',
+                '<i>побуд. залог гл.</i> <a href="#003-19-230">つく</a>')
+            contents = contents.replace('(<i>редко</i> 供わる) (<i>о себе тк.</i> 具わる)\n: …が～',
+                                        '(<i>о себе тк.</i> 具わる) (<i>редко</i> 供わる) …が～')
+            contents = contents.replace('…を記録に残す, …の記録をとる <i>см. выше</i> ～する;', 'を記録に残す, の記録をとる <i>см. выше</i> する')
+            contents = contents.replace('(<i>в конце предл. после</i> かも)', '…かも～ <i>в конце предл.</i>')
+            contents = contents.replace('(<i>как 2-й компонент сложн. сл.</i> ざいく) [мелкие] изделия, поделки;', 'ざいく')
+            contents = contents.replace(' (<i>напр.</i> кударидзака <i>вм.</i> кударисака)', '')
+            contents = contents.replace(
+                '2) как и следовало ожидать (<i>неправ. вм.</i> <a href="#000-83-01">かぜん【果然】</a>).',
+                '2) <i>неправ.</i> как и следовало ожидать.')
+            contents = contents.replace('(<i>вм.</i> 言わざる) ', '')
+            contents = contents.replace('(<i>вм.</i> 聞かざる) ', '')
+            contents = contents.replace('(<i>вм.</i> 見ざる) ', '')
+            contents = contents.replace('～の <i>см.</i> <a href="#003-79-98">かいせんじょう(～の)</a>.',
+                                        '～の <i>см.</i> <a href="#003-79-98">かいせんじょう(～[の])</a>.')
+            contents = contents.replace('～にする <i>см.</i> <a href="#003-80-49">こ【粉】(～にする)</a>.',
+                                        '～にする <i>см.</i> <a href="#003-80-49">こ【粉】(～にする)</a>.')
+            contents = contents.replace('粉にする(ひく) растирать в порошок; перемалывать на муку; толочь, молоть;',
+                                        '～にする, ～にひく растирать в порошок; перемалывать на муку; толочь, молоть;')
+            contents = contents.replace('<i>см.</i> <a href="#008-81-40">しりごみ (～する)</a>.',
+                                        '<i>см.</i> <a href="#008-81-40">しりごみ (～[を]する)</a>.')
+            contents = contents.replace('～[の] <i>см.</i> <a href="#003-36-07">じもと (～の)</a>.',
+                                        '～[の] <i>см.</i> <a href="#003-36-07">じもと (～[の])</a>.')
+            contents = contents.replace('ぶっ違いに置く', '～に置く')
+            contents = contents.replace('頰を火照らす <i>см.</i> <a href="#002-55-30">ほてる(頰が火照る)</a>;',
+                                        '＝頰を～ <i>см.</i> <a href="#002-55-30">ほてる(＝頰が～)</a>;')
+            contents = contents.replace('頰がほてる щёки пылают, лицо залила краска;',
+                                        '＝頰が～ щёки пылают, лицо залила краска;')
+            contents = contents.replace('<i>прост. что-л. рассчитанное на дешёвый эффект</i>;',
+                                        '<i>прост.</i> что-л. рассчитанное на дешёвый эффект;')
+            contents = contents.replace('<i>кн. заставлять быть таким:</i>',
+                                        '<i>кн.</i> заставлять быть таким:')
+            contents = contents.replace('<i>ономат. звук кипящего масла (при жаренье)</i>;',
+                                        '<i>ономат.</i> звук кипящего масла (при жаренье);')
+            contents = contents.replace('<i>ономат. отрывистый звук хлопушки и т. п.</i>;',
+                                        '<i>ономат.</i> отрывистый звук <i>хлопушки и т. п.</i>;')
+            contents = contents.replace('旅慣れた', '｜た～')
+            contents = contents.replace('旅慣れない', '｜ない～')
+            contents = contents.replace('1) <i>ономат. о выстреле, стуке или ударе обо что-л.</i>;',
+                                        '1) <i>ономат.</i> о выстреле, стуке или ударе <i>обо что-л.</i>;')
+            contents = contents.replace('<i>после сущ. подчёркивающая частица:</i>',
+                                        '<i>после сущ.</i> подчёркивающая частица:')
+            contents = contents.replace('待ち切れない', '｜れない～')
+            contents = contents.replace('足掻きがとれない', '～がとれない')
+            contents = contents.replace('胡座をかく', '～をかく')
+            contents = contents.replace('呆気に取られる', '～に取られる')
+            contents = contents.replace('口をあんぐりあいて', '＝口を～あいて')
+            contents = contents.replace('生き馬の目を抜く[ような事をする]', '～の目を抜く[ような事をする]')
+            contents = contents.replace('一縷の煙', '～の煙')
+            contents = contents.replace('一縷の命', '～の命')
+            contents = contents.replace('一縷の望みを抱く', '～の望みを抱く')
+            contents = contents.replace('一掬の水', '～の水')
+            contents = contents.replace('一掬の涙なきを得ない', '～のなきを得ない')
+            contents = contents.replace('一挙手一投足の労/ロウ/', '～の労/ロウ/')
+            contents = contents.replace('一挙手一投足に過ぎない', '～に過ぎない')
+            contents = contents.replace('一再ならず', '～ならず')
+            contents = contents.replace('いっそ[のこと]', '～[のこと]')
+            contents = contents.replace('命冥加が尽きた', '～が尽きた')
+            contents = contents.replace('命冥加な奴だ', '～な奴だ')
+            contents = contents.replace('うんうん言っている', '～言っている')
+            contents = contents.replace('江戸前の魚', '～の魚')
+            contents = contents.replace('江戸前の料理', '～の料理')
+            contents = contents.replace('王手飛車を食う', '～を食う')
+            contents = contents.replace('王手飛車に掛ける', '～に掛ける')
+            contents = contents.replace('臆面もない', '～もない')
+            contents = contents.replace('烏滸の沙汰/サタ/', '～の沙汰/サタ/')
+            contents = contents.replace('心を落ち着けて', '＝心を｜て～')
+            contents = contents.replace('お目にかかる', '～にかかる')
+            contents = contents.replace('お目にかける', '～にかける')
+            contents = contents.replace('…のお目に止まる', '…の～に止まる')
+            contents = contents.replace('思い半ばに過ぎぬ', '～に過ぎぬ')
+            contents = contents.replace('思う壷に嵌る', '～に嵌る')
+            contents = contents.replace('開巻第一に', '～第一に')
+            contents = contents.replace('回天の偉業(事業)', '～の偉業(事業)')
+            contents = contents.replace('回天の力', '～の力')
+            contents = contents.replace('固唾を飲む', '～を飲む')
+            contents = contents.replace('かちんと鳴る', '～と鳴る')
+            contents = contents.replace('かちんかちん', '～かちん')
+            contents = contents.replace('紙一重である', '～である')
+            contents = contents.replace('からっと晴れ上がる', '～晴れ上がる')
+            contents = contents.replace('からっと揚げる', '～揚げる')
+            contents = contents.replace('かんかん鳴る', '～鳴る')
+            contents = contents.replace('かんかん日が照っている', '～日が照っている')
+            contents = contents.replace('かんかんに怒る', '～に怒る')
+            contents = contents.replace('三学年生', '＝三～')
+            contents = contents.replace('がちゃがちゃいう音', '～いう音')
+            contents = contents.replace('がちゃがちゃさせる(音を立てる)', '～させる, ～音を立てる')
+            contents = contents.replace('がぶりと飲み込む', '～と飲み込む')
+            contents = contents.replace('がぶりと嚙み付く', '～と嚙み付く')
+            contents = contents.replace('がやがや騒ぐ', '～騒ぐ')
+            contents = contents.replace('がらがらいう音', '～いう音')
+            contents = contents.replace('がらがらと音がする', '～と音がする')
+            contents = contents.replace('がりがり音を立てる', '～音を立てる')
+            contents = contents.replace('がりがり嚙む', '～嚙む')
+            contents = contents.replace('がんがん鳴る(鳴らす)', '～鳴る, ～鳴らす')
+            contents = contents.replace('喜の字', '～の字')
+            contents = contents.replace('喜の祝', '～の祝')
+            contents = contents.replace('機影を現わす', '～を現わす')
+            contents = contents.replace('機影を没する', '～を没する')
+            contents = contents.replace('気位が高い', '～が高い')
+            contents = contents.replace('気随気儘な', '～気儘な')
+            contents = contents.replace('きちきちに詰まっている', '～に詰まっている')
+            contents = contents.replace('時間きちきちに', '＝時間～に')
+            contents = contents.replace('気骨が折れる', '～が折れる')
+            contents = contents.replace('気骨の折れる', '～の折れる')
+            contents = contents.replace('きーきーいう音', '～いう音')
+            contents = contents.replace('きーきー鳴く', '～鳴く')
+            contents = contents.replace('ぎゃふんと言わせる', '～言わせる')
+            contents = contents.replace('ぎゃふんと言う(参る)', '～言う, ～参る')
+            contents = contents.replace('ぎゅうぎゅう鳴る', '～鳴る')
+            contents = contents.replace('ぎゅうぎゅう鳴る音', '～鳴る音')
+            contents = contents.replace('ぎゅーと言う音', '～と言う音')
+            contents = contents.replace('ぎゅーと開く', '～と開く')
+            contents = contents.replace('ぎょろぎょろ見る', '～見る')
+            contents = contents.replace('くすくす笑う', '～笑う')
+            contents = contents.replace('くたくた疲れる', '～疲れる')
+            contents = contents.replace('汗でカラーがくたくたになった', '＝汗でカラーが～になった')
+            contents = contents.replace('くたくた煮る', '～煮る')
+            contents = contents.replace('口占で見る', '～で見る')
+            contents = contents.replace('口幅ったい事を言う', '～事を言う')
+            contents = contents.replace('くつくつ笑う', '～笑う')
+            contents = contents.replace('目がくらくらする', '＝目が～する')
+            contents = contents.replace('くらくら煮え立つ', '～煮え立つ')
+            contents = contents.replace('暮れ残る空の色', '～空の色')
+            contents = contents.replace('暮れ残る白百合/シラユリ/', '～白百合/シラユリ/')
+            contents = contents.replace('くんくんと泣く', '～と泣く')
+            contents = contents.replace('くんくん嗅ぐ', '～嗅ぐ')
+            contents = contents.replace('ぐいっと飲む', '～飲む')
+            contents = contents.replace('ぐいと引く', '～引く')
+            contents = contents.replace('ぐうぐう寝る', '～寝る')
+            contents = contents.replace('腹がぐうぐう鳴る', '＝腹が～鳴る')
+            contents = contents.replace('ぐうの音も出ない', '～も出ない')
+            contents = contents.replace('ぐるぐる回る', '～回る')
+            contents = contents.replace('ぐるぐる巻く(巻きにする)', '～巻く, ～巻きにする')
+            contents = contents.replace('けりが付く', '～が付く')
+            contents = contents.replace('鳧を付ける', '～を付ける')
+            contents = contents.replace('乾坤一擲の勝負をやる', '～の勝負をやる')
+            contents = contents.replace('玄関払いを食わす', '～を食わす')
+            contents = contents.replace('玄関払いを食わさせる', '～を食わさせる')
+            contents = contents.replace('好学の念', '～の念')
+            contents = contents.replace('好学の士', '～の士')
+            contents = contents.replace('浩然の気', '～の気')
+            contents = contents.replace('浩然の気を養う', '～の気を養う')
+            contents = contents.replace('孤高の生活', '～の生活')
+            contents = contents.replace('孤高を持/ジ/す', '～を持/ジ/す')
+            contents = contents.replace('…するを快しとする', '…するを～とする')
+            contents = contents.replace('…するを快しとしない', '…するを～としない')
+            contents = contents.replace('ころころ転げる', '～転げる')
+            contents = contents.replace('あの人はころころとふとっている', '＝あの人は～とふとっている')
+            contents = contents.replace('ころころと鳴く', '～と鳴く')
+            contents = contents.replace('狐がこんこんと鳴く', '＝狐が～と鳴く')
+            contents = contents.replace('こんこんと咳をする', '～と咳をする')
+            contents = contents.replace('こんこんと打つ', '～と打つ')
+            contents = contents.replace('雪がこんこんと降る', '＝雪が～と降る')
+            contents = contents.replace('滾々と流れる', '～と流れる')
+            contents = contents.replace('滾々として尽きない', '～として尽きない')
+            contents = contents.replace('ごうと通る', '～と通る')
+            contents = contents.replace('ごうという彼の音', '～という彼の音')
+            contents = contents.replace('轟々という音', '～という音')
+            contents = contents.replace('轟々と鳴る', '～と鳴る')
+            contents = contents.replace('呉下の阿蒙/アモウ/である', '～の阿蒙/アモウ/である')
+            contents = contents.replace('ごぼごぼいう音', '～いう音')
+            contents = contents.replace('ごぼごぼ音がする', '～音がする')
+            contents = contents.replace('目を覚ます', '＝目を～')
+            contents = contents.replace('酔いを醒ます', '＝酔いを～')
+            contents = contents.replace('迷い(迷夢)を醒ます', '＝迷い(迷夢)を～')
+            contents = contents.replace('[目が]覚める', '＝[目が]～')
+            contents = contents.replace('目のさめるような美人', '＝目の～ような美人')
+            contents = contents.replace('酔いが醒める', '＝酔いが～')
+            contents = contents.replace('ざくざく音がする', '～音がする')
+            contents = contents.replace('砂をざくざく踏む', '＝砂を～踏む')
+            contents = contents.replace('ざーざー降りの雨', '～降りの雨')
+            contents = contents.replace('ざーざー流れる', '～流れる')
+            contents = contents.replace('四季折々の花', '～の花')
+            contents = contents.replace('四季折々の眺めがある', '～の眺めがある')
+            contents = contents.replace('しくしく泣く', '～泣く')
+            contents = contents.replace('腹がしくしく痛む', '＝腹が～痛む')
+            contents = contents.replace('死出の旅', '～の旅')
+            contents = contents.replace('死出の山', '～の山')
+            contents = contents.replace('芝居道の人々', '～の人々')
+            contents = contents.replace('芝居道に入/ハイ/る', '～に入/ハイ/る')
+            contents = contents.replace('…を斜に構える', '…を～に構える')
+            contents = contents.replace('体を斜に構える', '＝体を～に構える')
+            contents = contents.replace('衆口一致して', '～一致して')
+            contents = contents.replace('手裏に掌握する', '～に掌握する')
+            contents = contents.replace('手裏を脱する', '～を脱する')
+            contents = contents.replace('しゅーと言う音', '～と言う音')
+            contents = contents.replace('しゅーしゅーいう', '～いう')
+            contents = contents.replace('性懲りもなく', '～もなく')
+            contents = contents.replace('神も照覧あれ', '＝神も～あれ')
+            contents = contents.replace('雨がしょぼしょぼ降る', '＝雨が～降る')
+            contents = contents.replace('しょぼしょぼに濡れる', '～に濡れる')
+            contents = contents.replace('しょぼしょぼした目', '～した目')
+            contents = contents.replace('目をしょぼしょぼさせる', '＝目を～させる')
+            contents = contents.replace('しょぼしょぼした髯', '～した髯')
+            contents = contents.replace('十目の見る所', '～の見る所')
+            contents = contents.replace('上聞に入れる', '～に入れる')
+            contents = contents.replace('上聞に達する', '～に達する')
+            contents = contents.replace('すかを食わす', '～を食わす')
+            contents = contents.replace('すかを食う', '～を食う')
+            contents = contents.replace('足を滑らす', '＝足を～')
+            contents = contents.replace('口をすべらした', '＝口を｜した～')
+            contents = contents.replace('専門外の人', '～の人')
+            contents = contents.replace('それは専門外だ', '＝それは～だ')
+            contents = contents.replace('千慮の一失', '～の一失')
+            contents = contents.replace('ぜいぜい言う', '～言う')
+            contents = contents.replace('蘇張の弁/ベン/', '～の弁/ベン/')
+            contents = contents.replace('蘇張の弁を振う', '～の弁を振う')
+            contents = contents.replace('蒼茫たる大海', '～たる大海')
+            contents = contents.replace('蒼茫と暮れて行く', '～と暮れて行く')
+            contents = contents.replace('俎上の魚', '～の魚')
+            contents = contents.replace('俎上に載せる', '～に載せる')
+            contents = contents.replace('俎上に置く(載せる)', '～に置く, ～に載せる')
+            contents = contents.replace('耳を欹てる', '＝耳を～')
+            contents = contents.replace('目を欹てる', '＝目を～')
+            contents = contents.replace('側杖を食う', '～を食う')
+            contents = contents.replace('側杖を食って殺される', '～を食って殺される')
+            contents = contents.replace('あぶないぞ！', '＝あぶない～！')
+            contents = contents.replace('誰ぞ来たのか？', '＝誰～来たのか？')
+            contents = contents.replace('ぞっきに出す', '～に出す')
+            contents = contents.replace('ぞっきで売る', '～で売る')
+            contents = contents.replace('大過なきに近い', '～に近い')
+            contents = contents.replace('大過無きを得/エ/る', '～を得/エ/る')
+            contents = contents.replace('高砂のじいさんとばあさん', '～じいさんとばあさん')
+            contents = contents.replace('高砂の松', '～の松')
+            contents = contents.replace('高枕で寝る', '～で寝る')
+            contents = contents.replace('世間知らずの高枕', '＝世間知らずの～')
+            contents = contents.replace('お互っこだ', '＝お～だ')
+            contents = contents.replace('他見を憚る', '～を憚る')
+            contents = contents.replace('他見を許さない', '～を許さない')
+            contents = contents.replace('多情多恨の一生を送る', '～の一生を送る')
+            contents = contents.replace('多情多恨の志士', '～の志士')
+            contents = contents.replace('立て付けが良い', '～が良い')
+            contents = contents.replace('立て付けの悪い戸', '～の悪い戸')
+            contents = contents.replace('他聞を憚る', '～を憚る')
+            contents = contents.replace('上から水がたらたら落ちる', '＝上から水が～落ちる')
+            contents = contents.replace('汗をたらたら流している', '＝汗を～流している')
+            contents = contents.replace('駄法螺を吹く', '～を吹く')
+            contents = contents.replace('断金の友', '～の友')
+            contents = contents.replace('断金の交り(契り)', '～の交り(契り)')
+            contents = contents.replace('ちくりと刺す', '～と刺す')
+            contents = contents.replace('ちくりと痛む', '～と痛む')
+            contents = contents.replace('ちちと啼く', '～と啼く')
+            contents = contents.replace('ちびりちびり飲む', '～飲む')
+            contents = contents.replace('ちゅーちゅー鳴く', '～鳴く')
+            contents = contents.replace('無用の長物', '＝無用の～')
+            contents = contents.replace('無用の長物視する', '＝無用の～視する')
+            contents = contents.replace('ちょきちょきはさみ切る', '～はさみ切る')
+            contents = contents.replace('ちょきん切る', '～切る')
+            contents = contents.replace('ちょきんと立つ', '～と立つ')
+            contents = contents.replace('犬がちんちんをする', '＝犬が～をする')
+            contents = contents.replace('月回りがいい', '～がいい')
+            contents = contents.replace('今月は月回りが悪い', '＝今月は～が悪い')
+            contents = contents.replace('息をつく', '＝息を～')
+            contents = contents.replace('嘘を吐く', '＝嘘を～')
+            contents = contents.replace('つべこべ喋べる', '～喋べる')
+            contents = contents.replace('つべこべ返答する', '～返答する')
+            contents = contents.replace('つべこべ云わずに', '～云わずに')
+            contents = contents.replace('つべこべ言うな', '～言うな')
+            contents = contents.replace('茶の出殻', '＝茶の～')
+            contents = contents.replace('繭の出殻', '＝繭の～')
+            contents = contents.replace('飛び抜けて一番になる', '～一番になる')
+            contents = contents.replace('飛び抜けて一着', '～一着')
+            contents = contents.replace('途方に暮れる', '～に暮れる')
+            contents = contents.replace('途方に暮れさせる', '～に暮れさせる')
+            contents = contents.replace('途方もない', '～もない')
+            contents = contents.replace('同窓[の友]', '～[の友]')
+            contents = contents.replace('どうのこうの言わずに', '～言わずに')
+            contents = contents.replace('どうのこうの言って承諾しない', '～言って承諾しない')
+            contents = contents.replace('どかっと腰を下ろす', '～腰を下ろす')
+            contents = contents.replace('相場がどかっと下がった', '＝相場が～下がった')
+            contents = contents.replace('胸をどきんと衝く', '＝胸を～衝く')
+            contents = contents.replace('…の度胆を抜く', '…の～を抜く')
+            contents = contents.replace('度胆を抜かれる', '～を抜かれる')
+            contents = contents.replace('呑舟の魚', '～の魚')
+            contents = contents.replace('呑舟の魚を漏らす', '～の魚を漏らす')
+            contents = contents.replace('何食わぬ顔で(顔をして)', '～顔で, ～顔をして')
+            contents = contents.replace('何食わぬ顔をする', '～顔をする')
+            contents = contents.replace('波間に漂う', '～に漂う')
+            contents = contents.replace('波間をかいくぐる', '～をかいくぐる')
+            contents = contents.replace('二進も三進も行かない', '～行かない')
+            contents = contents.replace('二進も三進も動けない', '～動けない')
+            contents = contents.replace('二の句が継げない', '～が継げない')
+            contents = contents.replace('二の句を継げなくする', '～を継げなくする')
+            contents = contents.replace('ここは寝心地がよい', '＝ここは～がよい')
+            contents = contents.replace('寝心地のよい床', '～のよい床')
+            contents = contents.replace('穿き心地の良い靴', '～の良い靴')
+            contents = contents.replace('八分の一', '～の一')
+            contents = contents.replace('はっしと切りつける', '～切りつける')
+            contents = contents.replace('打込む刀をはっしと受け止める', '＝打込む刀を～受け止める')
+            contents = contents.replace('お話中', '＝お～')
+            contents = contents.replace('お話中ですか', '＝お～ですか')
+            contents = contents.replace('お話中失礼ですが', '＝お～失礼ですが')
+            contents = contents.replace('どうも憚りさま', '＝どうも～')
+            contents = contents.replace('憚りさまですが', '～ですが')
+            contents = contents.replace('空に憚る', '＝空に～')
+            contents = contents.replace('大角[の笛]', '～[の笛]')
+            contents = contents.replace('大角を吹く', '～を吹く')
+            contents = contents.replace('反間の策', '～の策')
+            contents = contents.replace('反間苦肉の計', '～苦肉の計')
+            contents = contents.replace('敵軍に反間を放つ', '＝敵軍に～を放つ')
+            contents = contents.replace('はーはー言う', '～言う')
+            contents = contents.replace('息をきらしてはーはーいう', '＝息をきらして～いう')
+            contents = contents.replace('場数を踏む', '～を踏む')
+            contents = contents.replace('縛の縄', '～の縄')
+            contents = contents.replace('縛につく', '～につく')
+            contents = contents.replace('莫逆の友', '～の友')
+            contents = contents.replace('莫逆の交わり', '～の交わり')
+            contents = contents.replace('いくら言っても馬耳東風だ', '＝いくら言っても～だ')
+            contents = contents.replace('馬耳東風に聞き流す', '～に聞き流す')
+            contents = contents.replace('ばちゃんとドアを締める', '～[と]ドアを締める')
+            contents = contents.replace('水にばちゃんと落ちる', '＝水に～[と]落ちる')
+            contents = contents.replace('ばつを合わせる', '～を合わせる')
+            contents = contents.replace('ばつが悪い', '～が悪い')
+            contents = contents.replace('ばらばら撒く', '～撒く')
+            contents = contents.replace('ばらばら降る', '～降る')
+            contents = contents.replace('ばりばり引っ掻く', '～引っ掻く')
+            contents = contents.replace('ばりばり嚙む', '～嚙む')
+            contents = contents.replace('仕事をばりばりやる', '＝仕事を～やる')
+            contents = contents.replace('万芸に通じている人', '～に通じている人')
+            contents = contents.replace('万芸に通じて一芸を成/ナ/さない', '万芸に通じて一芸を成さない')
+            contents = contents.replace('万丈の気焰を上げる', '～の気焰を上げる')
+            contents = contents.replace('波瀾万丈だった時代', '＝波瀾～だった時代')
+            contents = contents.replace('万乗の位に上がる', '～の位に上がる')
+            contents = contents.replace('万乗の君/キミ/', '～の君/キミ/')
+            contents = contents.replace('口をぱくぱくさせる', '＝口を～させる')
+            contents = contents.replace('ぱくぱく食べる', '～食べる')
+            contents = contents.replace('タバコをぱくぱく吹かす', '＝タバコを～吹かす')
+            contents = contents.replace('口をぱくりと開いて', '＝口を～と開いて')
+            contents = contents.replace('ぱくりと食べる', '～と食べる')
+            contents = contents.replace('帆が風にぱたぱたする', '＝帆が風に～する')
+            contents = contents.replace('翼をぱたぱたする', '＝翼を～する')
+            contents = contents.replace('雨のぱたぱたいう音がする', '＝雨の～いう音がする')
+            contents = contents.replace('ほこりをぱたぱた払う', '＝ほこりを～払う')
+            contents = contents.replace('ぱちっと音がする', '～音がする')
+            contents = contents.replace('ぱちっと打つ', '～打つ')
+            contents = contents.replace('指でぱちっとはじく', '＝指で～はじく')
+            contents = contents.replace('小銃のぱちぱち言う音', '＝小銃の～言う音')
+            contents = contents.replace('手をぱちぱち叩く', '＝手を～叩く')
+            contents = contents.replace('目をぱちぱちさせる', '＝目を～させる')
+            contents = contents.replace('ぱっくり嚙みつく', '～嚙みつく')
+            contents = contents.replace('ぱっちりした目', '～した目')
+            contents = contents.replace('目をぱっちりあける', '＝目を～あける')
+            contents = contents.replace('刀をぱっちりさやに納める', '＝刀を～さやに納める')
+            contents = contents.replace('ぱっぱとタバコを吹かす', '～タバコを吹かす')
+            contents = contents.replace('ぱらぱら雨', '～雨')
+            contents = contents.replace('木の葉がぱらぱら散った', '＝木の葉が～散った')
+            contents = contents.replace('日当たりの好い', '～の好い')
+            contents = contents.replace('この部屋は日当たりが悪い', '＝この部屋は～が悪い')
+            contents = contents.replace('左褄を取る', '～を取る')
+            contents = contents.replace('左褄を取った女', '～を取った女')
+            contents = contents.replace('人払いをする', '～をする')
+            contents = contents.replace('人払いを命ずる', '～を命ずる')
+            contents = contents.replace('人払いを願う', '～を願う')
+            contents = contents.replace('火持ちが好い', '～が好い')
+            contents = contents.replace('火持ちが悪い', '～が悪い')
+            contents = contents.replace('ひゅーひゅー鳴る', '～鳴る')
+            contents = contents.replace('ひゅーひゅー鳴る音', '～鳴る音')
+            contents = contents.replace('びしゃりと打つ', '～打つ')
+            contents = contents.replace('びしゃりと本を閉じる', '～本を閉じる')
+            contents = contents.replace('雨がびしょびしょ降る', '＝雨が～降る')
+            contents = contents.replace('びしょびしょに濡れる', '～に濡れる')
+            contents = contents.replace('びっしょり汗をかく', '～汗をかく')
+            contents = contents.replace('シャツが汗でびっしょりだ', '＝シャツが汗で～だ')
+            contents = contents.replace('びりびり裂く', '～裂く')
+            contents = contents.replace('縫目をびりびり解く', '＝縫目を～解く')
+            contents = contents.replace('びりびりと震動する', '～と震動する')
+            contents = contents.replace('電撃をびりびりと感じる', '電撃を～と感じる')
+            contents = contents.replace('鬢太を張る', '～を張る')
+            contents = contents.replace('往復びんたを張る', '＝往復～を張る')
+            contents = contents.replace('ぴくぴく動く', '～動く')
+            contents = contents.replace('顔をぴくぴくさせる', '＝顔を～させる')
+            contents = contents.replace('ぴしっと石を打つ', '～石を打つ')
+            contents = contents.replace('ぴしっとむちで打つ', '～むちで打つ')
+            contents = contents.replace('不倶戴天の仇/アダ/', '～の仇/アダ/')
+            contents = contents.replace('不倶戴天の恨みをいだく', '～の恨みをいだく')
+            contents = contents.replace('不即不離の態度を持する(執る)', '～の態度を持する(執る)')
+            contents = contents.replace('不即不離の間柄になる', '～の間柄になる')
+            contents = contents.replace('ふっつり思い切る', '～思い切る')
+            contents = contents.replace('…とふっつりと手を切る', '…と～と手を切る')
+            contents = contents.replace('ふにゃふにゃ言う', '～言う')
+            contents = contents.replace('柔かくてふにゃふにゃしている', '＝柔かくて～している')
+            contents = contents.replace('…は頭がふらふらする', '…は頭が～する')
+            contents = contents.replace('…は足がふらふらする', '…は足が～する')
+            contents = contents.replace('ふらふら立ち上がる', '～立ち上がる')
+            contents = contents.replace('降り通しの雨', '～の雨')
+            contents = contents.replace('降り通しに降る', '～に降る')
+            contents = contents.replace('鼻をふんふん鳴らす', '＝鼻を～鳴らす')
+            contents = contents.replace('ふんふん嗅ぐ', '～嗅ぐ')
+            contents = contents.replace('香気芬芬たり', '＝香気～たり')
+            contents = contents.replace('臭気芬々鼻をつく', '＝臭気～鼻をつく')
+            contents = contents.replace('ぶうぶう鳴る', '～鳴る')
+            contents = contents.replace('ぶうぶう言う', '～言う')
+            contents = contents.replace('武運つたなく死ぬ', '～つたなく死ぬ')
+            contents = contents.replace('ぶつぶつ云う', '～云う')
+            contents = contents.replace('ぶつぶつ云う人', '～云う人')
+            contents = contents.replace('ぶつぶつ煮える', '～煮える')
+            contents = contents.replace('ぶんぶん言う', '～言う')
+            contents = contents.replace('兵馬倥傯の間に', '～の間に')
+            contents = contents.replace('兵馬倥傯の間に馳駆する', '～の間に馳駆する')
+            contents = contents.replace('翩々たる小才子', '～たる小才子')
+            contents = contents.replace('翩々として風に翻る', '～として風に翻る')
+            contents = contents.replace('べたりと坐る', '～と坐る')
+            contents = contents.replace('べたりとつく', '～とつく')
+            contents = contents.replace('お腹がぺこぺこだ', '＝お腹が～だ')
+            contents = contents.replace('ぺこんとお辞儀をする', '～お辞儀をする')
+            contents = contents.replace('ぺこんと凹む', '～と凹む')
+            contents = contents.replace('ぺたんと坐る', '～坐る')
+            contents = contents.replace('切手をぺたんと張る', '＝切手を～張る')
+            contents = contents.replace('ぺろりとなめる', '～となめる')
+            contents = contents.replace('ぺろりと舌を出す', '～と舌を出す')
+            contents = contents.replace('ぺろりと食べる(平らげる)', '～と食べる, ～と平らげる')
+            contents = contents.replace('奉公振りがよい', '～がよい')
+            contents = contents.replace('奉公振りが悪い', '～が悪い')
+            contents = contents.replace('したい放題に', '＝したい～に')
+            contents = contents.replace('食い放題に食う', '＝食い～に食う')
+            contents = contents.replace('言いたい放題のことを言う', '＝言いたい～のことを言う')
+            contents = contents.replace('這々の体/テイ/で', '～の体/テイ/で')
+            # contents = contents.replace('這々の体で引退る', '～の体で引退る')
+            contents = contents.replace('頰を火照らす', '＝頰を～')
+            contents = contents.replace('顔をほてらして', '＝顔を｜して～')
+            contents = contents.replace('まっかに顔をほてらせて', '＝まっかに顔を｜せて～')
+            contents = contents.replace('頰が火照る', '＝頰が～')
+            contents = contents.replace('頰がほてる', '＝頰が～')
+            contents = contents.replace('体中がほてっていた', '＝体中が｜って～いた')
+            contents = contents.replace('ほやりと笑う', '～笑う')
+            contents = contents.replace('洞が峠に陣取る', '～に陣取る')
+            contents = contents.replace('洞が峠を下がる', '～を下がる')
+            contents = contents.replace('暴虎慿河の勇', '～の勇')
+            contents = contents.replace('暴虎慿河の徒', '～の徒')
+            contents = contents.replace('ぼこぼこ音がする', '～音がする')
+            contents = contents.replace('ぼこぼこ湧き出る', '～湧き出る')
+            contents = contents.replace('ぼりぼり噛る', '～噛る')
+            contents = contents.replace('ぼりぼり掻く', '～掻く')
+            contents = contents.replace('ぼろくそに言う', '～に言う')
+            contents = contents.replace('本を傍にぽいと投げる', '＝本を傍に～投げる')
+            contents = contents.replace('ぽいと跳ぶ', '～跳ぶ')
+            contents = contents.replace('ぽかりとなぐる', '～となぐる')
+            contents = contents.replace('ぽかりと明く', '～と明く')
+            contents = contents.replace('指の節をぽきぽき鳴らす', '＝指の節を～鳴らす')
+            contents = contents.replace('ぽたり落ちる', '～落ちる')
+            contents = contents.replace('ぽたり滴る', '～滴る')
+            contents = contents.replace('汽車がぽっぽと煙を吐きながら停車場を出た',
+                                        '＝汽車が～煙を吐きながら停車場を出た')
+            contents = contents.replace('ぽっぽと湯気の出ているホット', '～湯気の出ているホット')
+            contents = contents.replace('ぽつりと一粒雨があたった', '～と一粒雨があたった')
+            contents = contents.replace('ぽつりと星が一つ残っている', '～と星が一つ残っている')
+            contents = contents.replace('ぽりぽり食べる', '～食べる')
+            contents = contents.replace('ぽりぽり爪で…をひっかく', '～爪で…をひっかく')
+            contents = contents.replace('涙をぽろぽろこぼす', '＝涙を～こぼす')
+            contents = contents.replace('ぽろぽろ砕ける', '～砕ける')
+            contents = contents.replace('ぽんとコルクを抜く', '～とコルクを抜く')
+            contents = contents.replace('ぽんと肩を叩く', '～と肩を叩く')
+            contents = contents.replace('ぽんと投げてやる', '～と投げてやる')
+            contents = contents.replace('ぽんと断る', '～と断る')
+            contents = contents.replace('ぽんぽん花火が上がった', '～花火が上がった')
+            contents = contents.replace('ぽんぽん手を鳴らす', '～手を鳴らす')
+            contents = contents.replace('ぽんぽん怒る', '～怒る')
+            contents = contents.replace('ぽーぽー鳴く', '～鳴く')
+            contents = contents.replace('ぽーぽー鳴る', '～鳴る')
+            contents = contents.replace('魔が差した', '～が差した')
+            contents = contents.replace('魔の海', '～の海')
+            contents = contents.replace('魔の手', '～の手')
+            contents = contents.replace('魔をよける', '～をよける')
+            contents = contents.replace('目が眩う', '＝目が～')
+            contents = contents.replace('待ちぼけを食う', '～を食う')
+            contents = contents.replace('丸々と太った', '～太った')
+            contents = contents.replace('丸々と肥えている', '～肥えている')
+            contents = contents.replace('万分の一', '～の一')
+            contents = contents.replace('それは耳新らしい事ではない', '＝それは～事ではない')
+            contents = contents.replace('何か耳新らしい事があるか', '＝何か～事があるか')
+            contents = contents.replace('弥陀/ミダ/の名号', '＝弥陀/ミダ/の～')
+            contents = contents.replace('六字の名号', '＝六字の～')
+            contents = contents.replace('むっくり起き上がる', '～起き上がる')
+            contents = contents.replace('むっくり肥えた', '～肥えた')
+            contents = contents.replace('むにゃむにゃ言う', '～言う')
+            contents = contents.replace('…しようという気がむらむら[と]起る',
+                                        '…しようという気が～[と]起る')
+            contents = contents.replace('煙がむらむら立ち上がる', '＝煙が～立ち上がる')
+            contents = contents.replace('病人の熱気でむんむんする', '＝病人の熱気で～する')
+            contents = contents.replace('[気が]めいる быть в подавленном настроении, прийти в уныние, пасть духом;\n気がめいって с тяжёлым сердцем;',
+                                        '[気が]めいる быть в подавленном настроении, прийти в уныние, пасть духом;\n＝気が｜って～ с тяжёлым сердцем;')
+            contents = contents.replace('[気が]めいる', '＝[気が]～')
+            contents = contents.replace('目八分に捧げる', '～に捧げる')
+            contents = contents.replace('目八分に…を見る', '～に…を見る')
+            contents = contents.replace('めりめりいう', '～いう')
+            contents = contents.replace('めりめり音がして倒れる', '～音がして倒れる')
+            contents = contents.replace('もぐもぐ[と]云う, 口をもぐもぐさせる',
+                                        '～[と]云う, ＝口を～させる')
+            contents = contents.replace('もぐもぐ嚙む', '～嚙む')
+            contents = contents.replace('もぐもぐ[と]動く', '～[と]動く')
+            contents = contents.replace('勿体をつける', '～をつける')
+            contents = contents.replace('物心が付く', '～が付く')
+            contents = contents.replace('物心付いて以来', '～付いて以来')
+            contents = contents.replace('物心のつかない内に', '～のつかない内に')
+            contents = contents.replace('門前払いを食わす', '～を食わす')
+            contents = contents.replace('門前払いを食う', '～を食う')
+            contents = contents.replace('動ともすれば, 動もすると', '～すれば, ～すると')
+            contents = contents.replace('動ともすれば…する', '～すれば…する')
+            contents = contents.replace('行きずりの人', '～の人')
+            contents = contents.replace('行きずりの縁/エン/', '～の縁/エン/')
+            contents = contents.replace('そんなことはないよ', '＝そんなことはない～')
+            contents = contents.replace('頼むよ', '＝頼む～')
+            contents = contents.replace('横槍を入れる', '～を入れる')
+            contents = contents.replace('横槍が出た', '～が出た')
+            contents = contents.replace('夜目の利く', '～の利く')
+            contents = contents.replace('夜目ではっきりとしない', '～ではっきりとしない')
+            contents = contents.replace('◇夜目遠目/トウメ/傘の中/ウチ/',
+                                        '夜目遠目傘の中')
+            contents = contents.replace('よろしきを得る', '～を得る')
+            contents = contents.replace('寛大よろしきを得る', '＝寛大～を得る')
+            contents = contents.replace('経営よろしきを得る', '＝経営～を得る')
+            contents = contents.replace('李下に冠/カンムリ/を正さず, 李下の冠',
+                                        '李下に冠を正さず, 李下の冠')
+            contents = contents.replace('俚耳に入り易/イリヤス/い', '～に入り易/イリヤス/い')
+            contents = contents.replace('俚耳に入りにくい', '～に入りにくい')
+            contents = contents.replace('槍を(太刀を)りゅうりゅうとしごく',
+                                        '＝槍(太刀)を～しごく')
+            contents = contents.replace('両手ききの人', '～の人')
+            contents = contents.replace('両天秤をかける', '～をかける')
+            contents = contents.replace('釐亳も', '～も')
+            contents = contents.replace('釐毫も違わない', '～も違わない')
+            contents = contents.replace('凜と張った目', '～張った目')
+            contents = contents.replace('凜とした態度', '～した態度')
+            contents = contents.replace('列氏寒暖計', '～寒暖計')
+            contents = contents.replace('連理の松/マツ/', '～の松/マツ/')
+            contents = contents.replace('連理の契/チギ/り', '～の契/チギ/り')
+            contents = contents.replace('六分の一', '～の一')
+            contents = contents.replace('カ氏寒暖計', '～寒暖計')
+            contents = contents.replace('セ氏寒暖計', '～寒暖計')
+            contents = contents.replace('<i>неправ., см.</i>', '<i>неправ.</i> <i>см.</i>')
+            contents = contents.replace('<i>сокр., см.</i>', '<i>сокр.</i> <i>см.</i>')
+            contents = contents.replace('\n<i>употребляется в двух формах:</i>', '')
+            contents = contents.replace('<i>уст. особая бумага, посылаемая в знак благодарности за небольшой подарок.</i>',
+                                        '<i>уст.</i> особая бумага, посылаемая в знак благодарности за небольшой подарок.')
+            contents = contents.replace('<a href="#005-67-03">おそるべき</a> <i>и др.</i>',
+                                        '<a href="#005-67-03">おそるべき</a>.')
+            contents = contents.replace('название яп. способа исчисления возраста (до 1949 г.), состоявшего в том, что год рождения считался за полный год; напр., считалось, что, в каком бы месяце 1903 г. ни родился ребёнок, с 1 января 1904 г. ему пошёл второй год',
+                                        'название яп. способа исчисления возраста (до 1949 г.)')
+            contents = contents.replace('<i>приписка после фамилии при адресовании писем.</i>',
+                                        'приписка после фамилии при адресовании писем.')
+            contents = contents.replace('[気が]腐る', '＝[気が]～')
+            contents = contents.replace('そんなに腐るな', '＝そんなに～な')
+            contents = contents.replace('化生の物', '～の物')
+            contents = contents.replace('<i>буд. что-л., ставшее живым существом; что-л., принявшее облик живого существа</i>',
+                                        '<i>буд.</i> что-л., ставшее живым существом; что-л., принявшее облик живого существа')
+            contents = contents.replace('<a href="#000-65-10">これほど</a> <i>и др.</i>',
+                                        '<a href="#000-65-10">これほど</a>')
+            contents = contents.replace('<i>ист. один из титулов придворных дам.</i>',
+                                        '<i>ист.</i> один из титулов придворных дам.')
+            contents = contents.replace('事件を劇に仕組む', '＝事件を劇に～')
+            contents = contents.replace('下に出す', '～に出す')
+            contents = contents.replace('下に取る', '～に取る')
+            contents = contents.replace('後を慕う', '＝後を～')
+            contents = contents.replace('失礼ながら…, 失礼ですが…', '～ながら, ～ですが')
+            contents = contents.replace('では失礼', '＝では～')
+            contents = contents.replace('じっと見詰める', '～見詰める')
+            contents = contents.replace('じっと我慢する(堪える)', '～我慢する, ～堪える')
+            contents = contents.replace('\n<i>в наст. вр. обычно не переводится</i>;', '')
+            contents = contents.replace(';\n4) <i>после вопр. мест. см. самые местоимения</i>', '')
+            contents = contents.replace('木という木', '＝木～木')
+            contents = contents.replace('所だった', '～だった')
+            contents = contents.replace('所です(だ)', '～です(だ)')
+            contents = contents.replace('どっこいしょと腰を下ろす', '～と腰を下ろす')
+            contents = contents.replace('物価がどんどん上がっている', '＝物価が～上がっている')
+            contents = contents.replace('どんどん売れる', '～売れる')
+            contents = contents.replace('湯をどんどん沸かす', '＝湯を～沸かす')
+            contents = contents.replace('どんどん質問する', '～質問する')
+            contents = contents.replace('美しいなあ', '＝美しい～')
+            contents = contents.replace('なあ君、そうだろう', '～君、そうだろう')
+            contents = contents.replace('猶…が如し(如くである)', '～…が如し(如くである)')
+            contents = contents.replace('…ようになる', '…ように～')
+            contents = contents.replace('…なくなる', '…なく～')
+            contents = contents.replace('抜き差しができない', '～ができない')
+            contents = contents.replace('抜き差しならぬ真実', '～ならぬ真実')
+            contents = contents.replace('今月に入ってから', '＝今月に｜って～から')
+            contents = contents.replace('梅雨に入る', '＝梅雨に～')
+            contents = contents.replace('店を張る', '＝店を～')
+            contents = contents.replace('世帯を張る', '＝世帯を～')
+            contents = contents.replace('ぱっぱとタバコを吹かす', '～タバコを吹かす')
+            contents = contents.replace('辞書を引く', '＝辞書を～')
+            contents = contents.replace('祖先を祀る', '＝祖先を～')
+            contents = contents.replace('祖先の霊を祀る', '＝祖先の霊を～')
+            contents = contents.replace('もはや五時を回った', '＝もはや五時を｜った～')
+            contents = contents.replace('…の向こうを張る', '…の～を張る')
+            contents = contents.replace('目に合う', '～に合う')
+            contents = contents.replace('持ちが良い', '～が良い')
+            contents = contents.replace('持ちをよくする', '～をよくする')
+            contents = contents.replace('そこが問題だ', '～が問題だ')
+            contents = contents.replace('～になる постричься [в монахи]; <i>обр.</i> (<i>тж.</i> 坊主に刈る) коротко '
+                                        'остричься, обрить голову;',
+                                        '～になる постричься [в монахи];\n～になる, ～に刈る <i>обр.</i> коротко остричься, '
+                                        'обрить голову;')
+            contents = contents.replace('2): ～の <i>поэтическое определение к таким словам, как</i> <a '
+                                        'href="#000-74-10">とし</a> <i>(год)</i>, <a href="#000-60-20">つき</a> <i>('
+                                        'месяц) и т. п.</i>;',
+                                        '2): ～の <i>поэтическое определение к таким словам, как год, месяц и т. п.</i>;')
+            contents = contents.replace('～のある, 勢いの好い сильный; энергичный; смелый; влиятельный;',
+                                        '～のある, ～の好い сильный; энергичный; смелый; влиятельный;')
+            contents = contents.replace('～をする(に接する) приглашать (принимать) гостей, устраивать приём;',
+                                        '～をする, ～に接する приглашать (принимать) гостей, устраивать приём;')
+            contents = contents.replace('2) (<i>тк.</i> 梶, <i>тж.</i> 楫) рулевое весло;',
+                                        '2) (<i>тк.</i> 梶) (<i>тж.</i> 楫) рулевое весло;')
+            contents = contents.replace('(<i>санскр.</i> namo, <i>сокр.</i> 南無阿弥陀仏/ナムアミダブツ/)',
+                                        '(<i>санскр.</i> namo) (<i>сокр.</i> 南無阿弥陀仏/ナムアミダブツ/)')
+            contents = contents.replace('耳が肥えている', '＝耳が｜て～いる')
+            contents = contents.replace('<i>разг. замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.</i>',
+                                        '<i>разг.</i> замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.')
+
+            contents = contents.replace('ё', 'е')
+            s_contents = contents.split('\n\n')[1:]
+
+            res = []
+            temp_res = []
+
+            for c in tqdm(s_contents, desc="[Warodai] Building word database".ljust(34), disable=not show_progress):
+                entries, temp_entries = self._convert_to_entry(c)
+                if entries:
+                    res.extend(entries)
+                if temp_entries:
+                    temp_res.extend(temp_entries)
+
+            return res, temp_res
+
+    def _get_entry_by_eid(self, eid) -> WarodaiEntry:
+        return [e for e in self._entries if e.eid == eid][0]
+
+    def _get_entry_index_by_eid(self, eid) -> int:
+        return self._entries.index(self._get_entry_by_eid(eid))
+
+    def lookup(self, lexeme: str, reading: str = '', search_mode: SearchMode = SearchMode.consecutive,
+               order: int = 1) -> List[SearchResult]:
+        if order < 1:
+            raise Exception(f'Error: order value ({order}) is less than 1')
+        if int(search_mode.value) not in [0, 1, 2]:
+            raise Exception(f'Error: unknown search mode ({search_mode})')
+        if any(not (_is_kanji(char) or _is_hira_or_kata(char)) for char in lexeme):
+            raise Exception(f'Error: bad characters in lexeme ({lexeme})')
+        if reading and any(not _is_hiragana(char) for char in reading):
+            raise Exception(f'Error: bad characters in reading ({reading})')
+
+        res = []
+        suitable_entries = []
+        if search_mode != SearchMode.deep_only:
+            suitable_entries = [e for e in self._entries if lexeme in e.lexeme]
+            if reading:
+                suitable_entries = [e for e in suitable_entries if reading in e.reading]
+
+        if search_mode != SearchMode.shallow_only and not suitable_entries:
+            lex_kanji = [k for k in lexeme if _is_kanji(k)]
+            if lex_kanji:
+                for char in lexeme:
+                    if _is_kanji(char):
+                        res.extend(
+                            [entry for entry in self._entries if any(lex for lex in entry.lexeme if char in lex)])
+
+                res = list(set(res))
+                if reading:
+                    narrowed_res = [r for r in res if reading in r.reading]
+                    if narrowed_res:
+                        res = narrowed_res
+
+                weighted_res = []
+
+                for r in res:
+                    weighted_res.append([0.0, r.eid])
+
+                if len(weighted_res) > 1:
+                    for w_r in weighted_res:
+                        for lex in self._get_entry_by_eid(w_r[1]).lexeme:
+                            w_r[0] = _distance(lexeme, lex)
+
+                weighted_res.sort(key=itemgetter(0), reverse=True)
+                orders = sorted(list(set([r[0] for r in weighted_res])), reverse=True)
+                suitable_entries = [self._get_entry_by_eid(e[1]) for e in weighted_res if
+                                    e[0] >= orders[min(len(orders) - 1, order - 1)]]
+            else:
+                suitable_entries = [e for e in self._entries if lexeme in e.lexeme or lexeme in e.reading]
+
+        final_res = []
+
+        for entry in suitable_entries:
+            final_res.append(
+                SearchResult(reading=entry.reading, lexeme=entry.lexeme,
+                             translation=self._translate_by_eid(entry.eid)))
+        return final_res
+
+    def _translate_by_eid(self, eid: str) -> List[str]:
+        def _retrieve_from_references(refs: [WarodaiReference]) -> List[str]:
+            if not refs:
+                return []
+
+            meanings = []
+            rrefs = []
+
+            for ref in refs:
+                temp_meanings = []
+                temp_rrefs = []
+                entry = self._get_entry_by_eid(ref.eid)
+                if ref.meaning_number != ['-1']:
+                    for m_n in ref.meaning_number:
+                        if m_n in entry.translation.keys():
+                            temp_meanings.extend(entry.translation[m_n])
+                        if m_n in entry.references.keys():
+                            temp_rrefs.extend(entry.references[m_n])
+                else:
+                    temp_meanings.extend(sum(list(entry.translation.values()), []))
+                    temp_rrefs.extend(sum(list(entry.references.values()), []))
+
+                if ref.prefix:
+                    temp_meanings = '; '.join(temp_meanings).split('; ')
+                    temp_meanings = [re.sub(r'(〈.+?[〉＿]\s)', '', meaning) for meaning in temp_meanings if
+                                meaning.startswith(ref.prefix)]
+
+                    temp_rrefs = [r for r in temp_rrefs if ref.prefix in r.body]
+
+                if ref.mode:
+                    temp_meanings = [f'《{ref.mode}》' + ' ' + meaning for meaning in temp_meanings]
+
+                if ref.body:
+                    temp_meanings = [ref.body + ' ' + meaning for meaning in temp_meanings]
+
+                meanings.extend(temp_meanings)
+                rrefs.extend(temp_rrefs)
+
+            return meanings + _retrieve_from_references(rrefs)
+
+        entry = self._get_entry_by_eid(eid)
+
+        return sum(list(entry.translation.values()), []) + [m for m in _retrieve_from_references(
+            sum(list(entry.references.values()), [])) if m]
+
+    def lookup_translations_only(self, lexeme: str, reading: str = '') -> List[str]:
+        return list(dict.fromkeys(sum([tr.translation for tr in self.lookup(lexeme, reading)], [])))
+
+
+if __name__ == '__main__':
+    # yd = YarxiDictionary('../dictionaries/yarxi_19.08.2020.db')
+    # while True:
+    #     lookup_res = yd.lookup(input().strip(), input().strip())
+    #     for res in lookup_res:
+    #         print(' / '.join(res.lexeme), '|', '〖' + ' / '.join(res.reading) + '〗')
+    #         for tr in res.translation:
+    #             print('  -', tr)
+    #         print('')
+
+    wd = WarodaiDictionary('../dictionaries/warodai_22.03.2020.txt', transliterate_collocations=False)
+    while True:
+        lookup_res = wd.lookup(input().strip(), input().strip())
+        for res in lookup_res:
+            print(' / '.join(res.lexeme), '|', '〖' + ' / '.join(res.reading) + '〗')
+            for tr in res.translation:
+                print('  -', tr)
+            print('')
