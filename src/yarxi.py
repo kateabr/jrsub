@@ -249,6 +249,7 @@ class YarxiLoader:
 
     def _clean_text(self, text: str) -> str:
         text = re.sub(r'^_', '', text)
+        text = re.sub(r'\[\\\'\'\\\^(.*)\\\'\'\\\]', lambda m: f'(от «{m.group(1)}»)', text)
         text = re.sub(r'(\^[\^|@])', '', text)
         text = re.sub(r'([^\s])_([^\s])', r'\1, \2', text)
         text = re.sub(r'^!', '', text)

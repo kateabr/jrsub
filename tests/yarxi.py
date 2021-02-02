@@ -112,6 +112,8 @@ class YarxiTests(unittest.TestCase):
                               self.yd.lookup_translations_only('暁', 'ぎょう'),
                               self.yd.lookup_translations_only('暁'))
 
+        self.assertEqual(self.yd.lookup_translations_only('椦'), ['《бот.》 сумах (от «nurude»)'])
+
     def test_general(self):
         # all entries contain at least one reading
         self.assertEqual(len([e for e in self.yd._entries if e.reading == []]), 0)
