@@ -8,8 +8,8 @@ yd = YarxiLoader().load()
 wd = WarodaiLoader().load()
 
 
-@app.route('/translate')
-def translate():
+@app.route('/')
+def hello_world():
     dictionary = request.args.get('dictionary')
     lexeme = request.args.get('lexeme')
     reading = request.args.get('reading')
@@ -22,10 +22,5 @@ def translate():
     return render_template('index.html', result=[])
 
 
-@app.route('/')
-def hello_world():
-    return render_template('index.html')
-
-
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0')

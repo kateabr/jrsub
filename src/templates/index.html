@@ -73,8 +73,9 @@
         const lexeme = document.getElementById("lexeme").value;
         const reading = document.getElementById("reading").value;
         if (lexeme!=='') {
-            window.location.replace('/translate?dictionary=' + dictionary + '&lexeme=' + lexeme + '&reading=' + reading);
+            window.location.replace('/?dictionary=' + dictionary + '&lexeme=' + lexeme + '&reading=' + reading);
         }
+
     }
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
