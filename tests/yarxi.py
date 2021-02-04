@@ -1,4 +1,5 @@
 import collections
+import re
 import unittest
 import time
 
@@ -209,6 +210,8 @@ class YarxiTests(unittest.TestCase):
         self.assertCountEqual(self.yd.lookup_translations_only('縮み上がる', 'ちぢみあがる'), ['сжиматься; съеживаться'])
 
         # いんなーわあ -> いんなーうぇあ
+        self.assertCountEqual(self.yd.lookup_translations_only(lexeme='インナーウェア', reading='いんなあうぇあ'),
+                         ['нательное (нижнее) белье (англ. 《innerware》)', 'нижнее белье'])
 
     def test_matching_lexemes(self):
         self.assertEqual(self.yd.lookup_translations_only('繰り返す', 'くりかえす'),
@@ -316,6 +319,12 @@ class YarxiTests(unittest.TestCase):
         for e in self.yd._entries:
             for rd in e.reading:
                 if any(not _is_hiragana(ch) for ch in rd):
+                    bad.append(e)
+        self.assertEqual(bad, [])
+
+        for e in self.yd._entries:
+            for tr in e.translation:
+                if re.search(r'\(\d+\)', tr) is not None:
                     bad.append(e)
         self.assertEqual(bad, [])
 

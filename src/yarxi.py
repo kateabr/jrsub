@@ -1,3 +1,5 @@
+import os
+import pathlib
 import pickle
 import re
 import sqlite3
@@ -116,7 +118,9 @@ class YarxiDictionary:
         entry = self._get_entry_by_eid(eid)
         return entry.translation + _retrieve_from_references(entry.references, [entry.eid])
 
-    def save(self, fname: str = "../dictionaries/yarxi.jtdb"):
+    def save(self, fname: str = "default"):
+        if fname == 'default':
+            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath('dictionaries/yarxi.jtdb')
         pickle.dump(self, open(fname, "wb"))
 
 
@@ -135,6 +139,8 @@ class YarxiLoader:
     _unreliable_translations: bool = True
     _unreliable_translations_pref: str = '〈возм. перевод〉 '
     _in_compounds_pref: str = '〈в сочет.〉 '
+
+    _last_eid: int = -1
 
     _collocations_right: {str: str} = {'*1': 'suru', '*2': 'na', '**2': 'no aru', '*3': 'no', '*=56': 'shite aru',
                                        '*7': 'taru',
@@ -193,7 +199,8 @@ class YarxiLoader:
         return self._kanji_db[code].kanji
 
     def _get_next_eid(self) -> str:
-        return str(int(self._entries[-1].eid) + 1)
+        self._last_eid += 1
+        return str(self._last_eid)
 
     def _load_kanji_db(self, fname, show_progress: bool = True) -> {str: str}:
         conn = sqlite3.connect(fname)
@@ -244,6 +251,8 @@ class YarxiLoader:
             res.extend(self._convert_to_entry_tango(
                 (str(k1), str(k2), str(k3), str(k4), kana, reading, translation, str(eid), hyphens)))
         conn.close()
+
+        self._last_eid = int(res[-1].eid)
 
         return res
 
@@ -508,9 +517,11 @@ class YarxiLoader:
                     if g_tr in translation:
                         translation = translation.replace(g_tr, f' {generic_translations[g_tr]} ').strip()
 
-                final_trs.append(self._clean_text(re.sub(r'(\(\d*\))?$', '', translation)))
+                final_trs.append(self._clean_text(re.sub(r'(\(\d*\))', '', translation)))
 
             return list(zip(reading_numbers, [fin_tr for fin_tr in final_trs if fin_tr]))
+
+        extension = []
 
         for kj in tqdm(list(kanji.values())[2:], desc="[Yarxi] Updating kanji database".ljust(34), disable=not
         show_progress):
@@ -522,7 +533,8 @@ class YarxiLoader:
             comp_readings_temp = re.search(r'\|(.*)', cleaned_kun)
             if comp_readings_temp:
                 for sp_c_r in comp_readings_temp.group(1).split('/'):
-                    readings = re.split(r'[_|,]', re.sub(r'q\d', 'い', _latin_to_hiragana(sp_c_r.replace('-', '').replace(' ', '').lower())))
+                    readings = re.split(r'[_|,]', re.sub(r'q\d', 'い', _latin_to_hiragana(
+                        sp_c_r.replace('-', '').replace(' ', '').lower())))
                     comp_readings[str(len(comp_readings))] = readings
 
             if not comp_readings['0']:
@@ -533,32 +545,68 @@ class YarxiLoader:
             if len(comp_translations) > 1:
                 comp_translations = _split_and_clean_compound_translations(comp_translations[1], kj.rus_nick)
                 for tr in comp_translations:
-                    # if kj.on == '-' or not kj.on:
-                    #     continue
                     if not tr[0]:
                         translation = re.sub(r'(.*\*#\*)(.*)(\*)', r'\2', kj.rus_nick)
-                        translation = re.sub(r'\'\'(.*)\'\'', lambda match: f'«{_latin_to_hiragana(match.group(1))}»', translation)
-                        self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
-                                                        translation=[self._in_compounds_pref + translation],
-                                                        eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+                        translation = re.sub(r'\'\'(.*)\'\'', lambda match: f'«{_latin_to_hiragana(match.group(1))}»',
+                                             translation)
+                        already_there = [e for e in extension if
+                                         e.reading == [cr for cr in comp_readings['0'] if cr] and e.lexeme == [
+                                             kj.kanji]]
+                        if not already_there:
+                            extension.append(
+                                YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
+                                           translation=[self._in_compounds_pref + translation],
+                                           eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+                        else:
+                            extension[extension.index(already_there[0])].translation.extend(
+                                [self._in_compounds_pref + translation])
                     else:
                         for tr_r in tr[0]:
-                            self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings[tr_r] if cr], lexeme=[kj.kanji],
-                                                            translation=[self._in_compounds_pref + tr[1]],
-                                                            eid=str(self._get_next_eid()), references=[],
-                                                            kanji=kj.kanji))
+                            already_there = [e for e in extension if
+                                             e.reading == [cr for cr in comp_readings[tr_r] if cr] and e.lexeme == [
+                                                 kj.kanji]]
+                            if not already_there:
+                                extension.append(
+                                    YarxiEntry(reading=[cr for cr in comp_readings[tr_r] if cr], lexeme=[kj.kanji],
+                                               translation=[self._in_compounds_pref + tr[1]],
+                                               eid=str(self._get_next_eid()), references=[],
+                                               kanji=kj.kanji))
+                            else:
+                                extension[extension.index(already_there[0])].translation.extend(
+                                    [self._in_compounds_pref + tr[1]])
             else:
                 nom_val = re.search(r'~=(.+)', kj.rus)
                 if nom_val is not None:
-                    self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
+                    already_there = [e for e in extension if
+                                     e.reading == [cr for cr in comp_readings['0'] if cr] and e.lexeme == [kj.kanji]]
+                    if not already_there:
+                        extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
                                                     translation=[
                                                         self._in_compounds_pref + self._clean_text(nom_val.group(1))],
                                                     eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+                    else:
+                        extension[extension.index(already_there[0])].translation.extend([
+                            self._in_compounds_pref + self._clean_text(nom_val.group(1))])
                 nom_val = re.search(r'~\$(.+)', kj.rus)
                 if nom_val is not None:
-                    self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
+                    already_there = [e for e in extension if
+                                     e.reading == [cr for cr in comp_readings['0'] if cr] and e.lexeme == [kj.kanji]]
+                    if not already_there:
+                        extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
                                                     translation=[self._in_compounds_pref + kj.rus_nick],
                                                     eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
+                    else:
+                        extension[extension.index(already_there[0])].translation.extend(
+                            [self._in_compounds_pref + kj.rus_nick])
+
+        for ext in tqdm(extension, desc="[Yarxi] Expanding word database".ljust(34), disable=not
+        show_progress):
+            already_there = [e for e in self._entries if
+                             e.reading == ext.reading and e.lexeme == ext.lexeme]
+            if not already_there:
+                self._entries.append(ext)
+            else:
+                self._entries[self._entries.index(already_there[0])].translation.extend(ext.translation)
 
     def rescan(self, fname: str = "../dictionaries/yarxi_19.08.2020.db", show_progress: bool = True) -> YarxiDictionary:
         self._kanji_db = self._load_kanji_db(fname, show_progress)
@@ -568,5 +616,7 @@ class YarxiLoader:
 
         return YarxiDictionary(self._entries)
 
-    def load(self, fname: str = "../dictionaries/yarxi.jtdb") -> YarxiDictionary:
+    def load(self, fname: str = "default") -> YarxiDictionary:
+        if fname == 'default':
+            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath('dictionaries/yarxi.jtdb')
         return pickle.load(open(fname, "rb"))

@@ -1,3 +1,5 @@
+import os
+import pathlib
 import pickle
 import re
 from dataclasses import dataclass
@@ -158,7 +160,9 @@ class WarodaiDictionary:
     def lookup_translations_only(self, lexeme: str, reading: str = '') -> List[str]:
         return list(dict.fromkeys(sum([tr.translation for tr in self.lookup(lexeme, reading)], [])))
 
-    def save(self, fname: str = "../dictionaries/warodai.jtdb"):
+    def save(self, fname: str = "default"):
+        if fname == 'default':
+            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath('dictionaries/warodai.jtdb')
         pickle.dump(self, open(fname, "wb"))
 
 
@@ -2267,7 +2271,7 @@ class WarodaiLoader:
                         replace_with = f'《{replace_with}》 ' if replace_with else ''
                         special_reading = re.search(r'/([^/]+?)/', r.group('lexeme'))
                         if special_reading is not None:
-                            ref_reading = JTran.transliterate_from_kana_to_hira(special_reading.group(1))
+                            ref_reading = [JTran.transliterate_from_kana_to_hira(special_reading.group(1))]
                         else:
                             ref_reading = _resolve_ref_reading(readings, r.group('lexeme'))
                         temp_res.append(WarodaiEntry(lexeme=re.sub(r'/.+?/', '', r.group('lexeme')).split(', '),
@@ -3806,5 +3810,7 @@ class WarodaiLoader:
     def _get_entry_index_by_eid(self, eid) -> int:
         return self._entries.index(self._get_entry_by_eid(eid))
 
-    def load(self, fname: str = "../dictionaries/warodai.jtdb") -> WarodaiDictionary:
+    def load(self, fname: str = "default") -> WarodaiDictionary:
+        if fname == 'default':
+            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath('dictionaries/warodai.jtdb')
         return pickle.load(open(fname, "rb"))

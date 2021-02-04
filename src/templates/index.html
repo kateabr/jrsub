@@ -4,48 +4,62 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.0/css/all.css">
     <title>JTran Demo</title>
 </head>
 <body>
-<form>
-<div class="btn-group btn-group-toggle" data-toggle="buttons" aria-required="true">
-    <label class="btn btn-secondary active">
-        {% if (dictionary == 'y') %}
-        <input type="radio" name="dictionary" id="yarxi" value="y" checked>Yarxi
-        {% else %}
-        <input type="radio" name="dictionary" id="yarxi" value="y">Yarxi
-        {% endif %}
-    </label>
-    <label class="btn btn-secondary">
-        {% if (dictionary == 'w') %}
-        <input type="radio" name="dictionary" id="warodai" value="w" checked>Warodai
-        {% else %}
-        <input type="radio" name="dictionary" id="warodai" value="w">Warodai
-        {% endif %}
-    </label>
+<div class="container" style="margin-top: 40px; margin-bottom: 40px">
+    <form>
+        <p>
+        <div class="btn-group btn-group-toggle" data-toggle="buttons" aria-required="true">
+            <label class="btn btn-secondary active">
+                {% if ((dictionary == 'y') or (not dictionary)) %}
+                <input type="radio" name="dictionary" id="yarxi" value="y" checked required>Yarxi
+                {% else %}
+                <input type="radio" name="dictionary" id="yarxi" value="y">Yarxi
+                {% endif %}
+            </label>
+            <label class="btn btn-secondary">
+                {% if (dictionary == 'w') %}
+                <input type="radio" name="dictionary" id="warodai" value="w" checked required>Warodai
+                {% else %}
+                <input type="radio" name="dictionary" id="warodai" value="w">Warodai
+                {% endif %}
+            </label>
+        </div>
+        </p>
+
+        <div class="input-group mb-3">
+            <div class="input-group-prepend">
+                <span class="input-group-text" id="inputGroup-sizing-default">Слово</span>
+            </div>
+            <input type="text" class="form-control" name="lexeme" id="lexeme" aria-label="Default"
+                   aria-describedby="inputGroup-sizing-default" required style="margin-right: 10px"
+                   value="{{ lexeme }}">
+            <div class="input-group-prepend">
+                <span class="input-group-text" id="inputGroup-sizing-default2">Чтение</span>
+            </div>
+            <input type="text" class="form-control" name="reading" id="reading" aria-label="Default"
+                   aria-describedby="inputGroup-sizing-default2" value="{{ reading }}">
+        </div>
+        <button type="submit" class="btn btn-primary" onclick="translate()">
+            <span class="fas fa-search" style="margin-right: 10px"></span>Искать
+        </button>
+    </form>
+
+    {% if result %}
+    {% for item in result %}
+    <h5 style="margin-top: 30px">{{ item.lexeme|join(' / ') }} 〖{{ item.reading|join(' / ') }}〗</h5>
+    {% for tr in item.translation %}
+    <div>- {{ tr }}</div>
+    {% endfor %}
+    {% endfor %}
+    {% else %}
+    {% if dictionary %}
+    <h5 style="margin-top: 30px">Ничего не найдено :(</h5>
+    {% endif %}
+    {% endif %}
 </div>
-
-<div>
-
-<label for="lexeme">Lexeme:</label>
-<input type="text" id="lexeme" name="lexeme" required>
-</div>
-    <div>
-<label for="reading">Reading:</label>
-<input type="text" id="reading" name="reading">
-</div>
-
-<button type="button" onclick="translate()">Translate</button>
-</form>
-
-{% if result %}
-{% for item in result %}
-<p>{{ item.lexeme|join(' / ') }} 〖{{ item.reading|join(' / ') }}〗</p>
-{% for tr in item.translation %}
-<div>- {{ tr }}</div>
-{% endfor %}
-{% endfor %}
-{% endif %}
 </body>
 <script>
     function translate() {
@@ -56,11 +70,11 @@
             dictionary = document.getElementById("warodai").value
         }
 
-
         const lexeme = document.getElementById("lexeme").value;
         const reading = document.getElementById("reading").value;
-        const query = '/translate?dictionary=' + dictionary + '&lexeme=' + lexeme + '&reading=' + reading
-        window.location.replace(query);
+        if (lexeme!=='') {
+            window.location.replace('/translate?dictionary=' + dictionary + '&lexeme=' + lexeme + '&reading=' + reading);
+        }
     }
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>

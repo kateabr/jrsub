@@ -4,8 +4,8 @@ from src.warodai import WarodaiLoader
 from src.yarxi import YarxiLoader
 
 app = Flask(__name__)
-yd = YarxiLoader().load('./dictionaries/yarxi.jtdb')
-wd = WarodaiLoader().load('./dictionaries/warodai.jtdb')
+yd = YarxiLoader().load()
+wd = WarodaiLoader().load()
 
 
 @app.route('/translate')
@@ -14,9 +14,11 @@ def translate():
     lexeme = request.args.get('lexeme')
     reading = request.args.get('reading')
     if dictionary == 'y':
-        return render_template('index.html', result=yd.lookup(lexeme=lexeme, reading=reading), dictionary=dictionary)
+        return render_template('index.html', result=yd.lookup(lexeme=lexeme, reading=reading),
+                               dictionary=dictionary, lexeme=lexeme, reading=reading)
     elif dictionary == 'w':
-        return render_template('index.html', result=wd.lookup(lexeme=lexeme, reading=reading), dictionary=dictionary)
+        return render_template('index.html', result=wd.lookup(lexeme=lexeme, reading=reading),
+                               dictionary=dictionary, lexeme=lexeme, reading=reading)
     return render_template('index.html', result=[])
 
 
