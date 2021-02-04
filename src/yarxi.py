@@ -418,6 +418,7 @@ class YarxiLoader:
                 translation = re.sub(r'^>{2}', '', translation)
                 translation = translation.replace('$', '')
                 translation = re.sub(r'\(!\d+\)', '', translation)
+                translation = translation.replace('^#', '')
 
                 common_part = ''
                 cnt = -1
@@ -491,6 +492,7 @@ class YarxiLoader:
         def _split_and_clean_compound_translations(translations: str, rus_nick: str):
             translations = re.sub(r'{!.*}', '-', translations)
             translations = translations.replace('{^^^}', '')
+            translations = translations.replace('^#', '')
 
             if translations == '-':
                 return [([], '')]

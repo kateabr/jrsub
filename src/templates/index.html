@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="height: 87vh">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
@@ -7,8 +7,8 @@
     <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.0/css/all.css">
     <title>JTran Demo</title>
 </head>
-<body>
-<div class="container" style="margin-top: 40px; margin-bottom: 40px">
+<body style="height: 87vh">
+<div class="container" style="margin-top: 40px; margin-bottom: 30px; min-height: 87vh; height: auto !important">
     <form>
         <p>
         <div class="btn-group btn-group-toggle" data-toggle="buttons" aria-required="true">
@@ -50,9 +50,11 @@
     {% if result %}
     {% for item in result %}
     <h5 style="margin-top: 30px">{{ item.lexeme|join(' / ') }} 〖{{ item.reading|join(' / ') }}〗</h5>
+    <ol>
     {% for tr in item.translation %}
-    <div>- {{ tr }}</div>
+    <li>{{ tr }}</li>
     {% endfor %}
+    </ol>
     {% endfor %}
     {% else %}
     {% if dictionary %}
@@ -60,6 +62,8 @@
     {% endif %}
     {% endif %}
 </div>
+
+<div style="text-align:center; width: 100%; margin-bottom: 30px">ktbr, 2021 | <a href="https://github.com/kateabr/jsub"><span class="fas fa-code-branch" style="margin-right: 2px"></span>GitHub</a></div>
 </body>
 <script>
     function translate() {
