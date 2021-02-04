@@ -286,8 +286,11 @@ class YarxiLoader:
                         reading = reading[:int(h_pos)] + reading[int(h_pos) + 1:]
                 return reading
 
-            reading = re.sub(r'(\*?Q\d)', '', reading)
+            reading = re.sub(r'(Q\d)', '', reading)
             reading = reading.replace('$', '')
+            reading = reading.replace('L1', '').replace('L2', '')
+            reading = reading.replace('=', '')
+            reading = reading.replace(' ', '')
 
             if variable:
                 split_reading = reading.split('*(*')
@@ -304,7 +307,7 @@ class YarxiLoader:
                 for i in range(0, len(res)):
                     res[i] = _resolve_hh(res[i], hyphens)
 
-            return sorted([_latin_to_hiragana(rd).strip() for rd in res if rd], key=len)
+            return sorted([_latin_to_hiragana(rd.lower()).strip() for rd in res if rd], key=len)
 
         def _resolve_lexemes(lexeme: str) -> (List[str], List[str], bool):
             kanji = [('1', self._get_kanji(k1)), ('2', self._get_kanji(k2)), ('3', self._get_kanji(k3)),
@@ -476,11 +479,12 @@ class YarxiLoader:
         return res
 
     def _extract_compound_values(self, kanji: {str: _Kanji}, show_progress: bool):
-        def _split_and_clean_compound_translations(translations: str, rus_nick: str) -> (str, int):
+        def _split_and_clean_compound_translations(translations: str, rus_nick: str):
             translations = re.sub(r'{!.*}', '-', translations)
+            translations = translations.replace('{^^^}', '')
 
             if translations == '-':
-                return [], []
+                return [([], '')]
 
             reading_numbers = []
             final_trs = []
@@ -511,14 +515,14 @@ class YarxiLoader:
         for kj in tqdm(list(kanji.values())[2:], desc="[Yarxi] Updating kanji database".ljust(34), disable=not
         show_progress):
 
-            comp_readings = {'0': [_latin_to_hiragana(on) for on in re.findall(r'\*(.*?)\*', kj.on)]}
+            comp_readings = {'0': [_latin_to_hiragana(on) for on in re.split(r'[*,;\)\(-]', kj.on) if on]}
 
-            cleaned_kun = re.sub(r'\|\|\$.*?\$', '', kj.kun)
+            cleaned_kun = kj.kun.split('||$')[0]
 
             comp_readings_temp = re.search(r'\|(.*)', cleaned_kun)
             if comp_readings_temp:
                 for sp_c_r in comp_readings_temp.group(1).split('/'):
-                    readings = re.split(r'[_|,]', _latin_to_hiragana(sp_c_r.replace('-', '').lower()))
+                    readings = re.split(r'[_|,]', re.sub(r'q\d', 'い', _latin_to_hiragana(sp_c_r.replace('-', '').replace(' ', '').lower())))
                     comp_readings[str(len(comp_readings))] = readings
 
             if not comp_readings['0']:
@@ -529,31 +533,30 @@ class YarxiLoader:
             if len(comp_translations) > 1:
                 comp_translations = _split_and_clean_compound_translations(comp_translations[1], kj.rus_nick)
                 for tr in comp_translations:
-                    if kj.on == '-':
-                        continue
-                    if not tr:
+                    # if kj.on == '-' or not kj.on:
+                    #     continue
+                    if not tr[0]:
                         translation = re.sub(r'(.*\*#\*)(.*)(\*)', r'\2', kj.rus_nick)
-                        translation = _latin_to_hiragana(
-                            re.sub(r'\'\'(.*)\'\'', lambda match: f'«{match.group(1)}»', translation))
-                        self._entries.append(YarxiEntry(reading=[on for on in kj.on.split('*') if on], lexeme=kj.kanji,
+                        translation = re.sub(r'\'\'(.*)\'\'', lambda match: f'«{_latin_to_hiragana(match.group(1))}»', translation)
+                        self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
                                                         translation=[self._in_compounds_pref + translation],
                                                         eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
                     else:
                         for tr_r in tr[0]:
-                            self._entries.append(YarxiEntry(reading=comp_readings[tr_r], lexeme=kj.kanji,
+                            self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings[tr_r] if cr], lexeme=[kj.kanji],
                                                             translation=[self._in_compounds_pref + tr[1]],
                                                             eid=str(self._get_next_eid()), references=[],
                                                             kanji=kj.kanji))
             else:
                 nom_val = re.search(r'~=(.+)', kj.rus)
                 if nom_val is not None:
-                    self._entries.append(YarxiEntry(reading=comp_readings['0'], lexeme=kj.kanji,
+                    self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
                                                     translation=[
                                                         self._in_compounds_pref + self._clean_text(nom_val.group(1))],
                                                     eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
                 nom_val = re.search(r'~\$(.+)', kj.rus)
                 if nom_val is not None:
-                    self._entries.append(YarxiEntry(reading=comp_readings['0'], lexeme=kj.kanji,
+                    self._entries.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr], lexeme=[kj.kanji],
                                                     translation=[self._in_compounds_pref + kj.rus_nick],
                                                     eid=str(self._get_next_eid()), references=[], kanji=kj.kanji))
 

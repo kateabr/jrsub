@@ -1783,9 +1783,8 @@ class WarodaiLoader:
                 lexemes.extend(rd.split(', '))
 
             readings = [x.strip() for x in
-                        re.sub(r'[a-zA-Z]*?', '',
-                               JTran.transliterate_from_kana_to_hira(re.sub(r'[…IV]*', '', rl.group('reading')))).split(
-                            ', ')]
+                        re.split(r'[,･]', re.sub(r'[a-zA-Z]*?', '',
+                               JTran.transliterate_from_kana_to_hira(re.sub(r'[…IV]*', '', rl.group('reading')))).replace('・', '').replace('！', ''))]
 
             return lexemes, readings
 

@@ -1,6 +1,5 @@
-from src.warodai import WarodaiDictionary, WarodaiLoader
-from src.yarxi import YarxiDictionary, YarxiLoader
-import pickle
+from src.warodai import WarodaiLoader
+from src.yarxi import YarxiLoader
 
 if __name__ == '__main__':
     print('Select a dictionary: [y]arxi or [w]arodai')

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <title>JTran Demo</title>
+</head>
+<body>
+<form>
+<div class="btn-group btn-group-toggle" data-toggle="buttons" aria-required="true">
+    <label class="btn btn-secondary active">
+        {% if (dictionary == 'y') %}
+        <input type="radio" name="dictionary" id="yarxi" value="y" checked>Yarxi
+        {% else %}
+        <input type="radio" name="dictionary" id="yarxi" value="y">Yarxi
+        {% endif %}
+    </label>
+    <label class="btn btn-secondary">
+        {% if (dictionary == 'w') %}
+        <input type="radio" name="dictionary" id="warodai" value="w" checked>Warodai
+        {% else %}
+        <input type="radio" name="dictionary" id="warodai" value="w">Warodai
+        {% endif %}
+    </label>
+</div>
+
+<div>
+
+<label for="lexeme">Lexeme:</label>
+<input type="text" id="lexeme" name="lexeme" required>
+</div>
+    <div>
+<label for="reading">Reading:</label>
+<input type="text" id="reading" name="reading">
+</div>
+
+<button type="button" onclick="translate()">Translate</button>
+</form>
+
+{% if result %}
+{% for item in result %}
+<p>{{ item.lexeme|join(' / ') }} 〖{{ item.reading|join(' / ') }}〗</p>
+{% for tr in item.translation %}
+<div>- {{ tr }}</div>
+{% endfor %}
+{% endfor %}
+{% endif %}
+</body>
+<script>
+    function translate() {
+        let dictionary = '';
+        if (document.getElementById("yarxi").checked) {
+            dictionary = document.getElementById("yarxi").value
+        } else if (document.getElementById("warodai").checked) {
+            dictionary = document.getElementById("warodai").value
+        }
+
+
+        const lexeme = document.getElementById("lexeme").value;
+        const reading = document.getElementById("reading").value;
+        const query = '/translate?dictionary=' + dictionary + '&lexeme=' + lexeme + '&reading=' + reading
+        window.location.replace(query);
+    }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</html>

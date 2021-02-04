@@ -3,6 +3,7 @@ import unittest
 import time
 
 from src.search import SearchMode
+from src.utils import _is_hiragana
 from src.yarxi import YarxiDictionary, YarxiLoader
 
 
@@ -45,8 +46,8 @@ class YarxiTests(unittest.TestCase):
     def test_retrieving_references(self):
         self.assertEqual(self.yd.lookup_translations_only('蚶', 'あかがい'), self.yd.lookup_translations_only('赤貝', 'あかがい'))
         self.assertCountEqual(self.yd.lookup_translations_only('合口', 'あいくち'),
-                         ['общий язык, возможность приятно побеседовать; приятный '
-                          'собеседник', 'кинжал без гарды'])
+                              ['общий язык, возможность приятно побеседовать; приятный '
+                               'собеседник', 'кинжал без гарды'])
 
     def test_translation(self):
         # complete synonyms
@@ -60,20 +61,20 @@ class YarxiTests(unittest.TestCase):
                          self.yd.lookup_translations_only('有り得る', 'ありうる'))
 
         self.assertCountEqual(self.yd.lookup_translations_only('宇', 'のき'),
-                         ['свисающий край крыши, стреха', '《перен.》 крыша над головой, '
-                                                          'дом'])
+                              ['свисающий край крыши, стреха', '《перен.》 крыша над головой, '
+                                                               'дом'])
 
         self.assertCountEqual(self.yd.lookup_translations_only('総角', 'あげまき'),
-                         ['старинная прическа мальчика (собранные в петли волосы '
-                          'крепились над ушами, образуя «рожки»)', 'женская прическа '
-                                                                   'конца xix в.('
-                                                                   'волосы '
-                                                                   'закручивались в '
-                                                                   'высокий узел и '
-                                                                   'закреплялись '
-                                                                   'булавками)',
-                          'узел агэмаки, бант с тремя петлями и двумя концами',
-                          'китайская ракушка-бритва, sinonovacula constricta'])
+                              ['старинная прическа мальчика (собранные в петли волосы '
+                               'крепились над ушами, образуя «рожки»)', 'женская прическа '
+                                                                        'конца xix в.('
+                                                                        'волосы '
+                                                                        'закручивались в '
+                                                                        'высокий узел и '
+                                                                        'закреплялись '
+                                                                        'булавками)',
+                               'узел агэмаки, бант с тремя петлями и двумя концами',
+                               'китайская ракушка-бритва, sinonovacula constricta'])
         self.assertEqual(self.yd.lookup_translations_only('総角', 'あげまき'), self.yd.lookup_translations_only('揚巻', 'あげまき'))
 
         # multiple meanings
@@ -98,13 +99,13 @@ class YarxiTests(unittest.TestCase):
                                '〈в сочет.〉 музыкальный звук', '〈в сочет.〉 звук [как единица речи]',
                                '〈в сочет.〉 он (китайское чтение иероглифа)', '〈в сочет.〉 весть'])
         self.assertCountEqual(self.yd.lookup_translations_only('音', 'いん'),
-                         ['〈в сочет.〉 звук [как единица речи]', '〈в сочет.〉 он (китайское чтение иероглифа)',
-                          '〈в сочет.〉 весть'])
+                              ['〈в сочет.〉 звук [как единица речи]', '〈в сочет.〉 он (китайское чтение иероглифа)',
+                               '〈в сочет.〉 весть'])
 
         # entry with erroneously put numeration
         self.assertCountEqual(self.yd.lookup_translations_only('紙垂', 'しで'),
-                         ['《синт.》 зигзагообразная бумажная лента (исп. в различных '
-                          'ритуалах)'])
+                              ['《синт.》 зигзагообразная бумажная лента (исп. в различных '
+                               'ритуалах)'])
 
         self.assertEqual(self.yd.lookup_translations_only('春眠暁を覚えず'),
                          ['《посл.》 весной спишь так, как будто рассвет никогда не наступит'])
@@ -137,10 +138,10 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(self.yd.lookup_translations_only('寒夜', 'かんや'), ['《кн.》 холодная (зимняя) ночь'])
         self.assertEqual(self.yd.lookup_translations_only('紡ぎ', 'つむぎ'), ['шелковая ткань типа чесучи'])
         self.assertCountEqual(self.yd.lookup_translations_only('阿', 'あ'),
-                         ['«а», 《первая буква санскритского алфавита》',
-                          '〈в сочет.〉 льстить, угодничать',
-                          '〈в сочет.〉 《употребляется фонетически》',
-                          '〈в сочет.〉 《сокр.》 африка'])
+                              ['«а», 《первая буква санскритского алфавита》',
+                               '〈в сочет.〉 льстить, угодничать',
+                               '〈в сочет.〉 《употребляется фонетически》',
+                               '〈в сочет.〉 《сокр.》 африка'])
 
         # no exclamation marks in the beginning of line
         self.assertEqual(self.yd.lookup_translations_only('紡ぎ歌', 'つむぎうた'), ['песня, исполняемая в процессе прядения'])
@@ -163,7 +164,8 @@ class YarxiTests(unittest.TestCase):
 
     def test_likeliness_score(self):
         self.assertEqual(self.yd.lookup_translations_only('聖エルモ'), ['огни святого эльма'])
-        self.assertEqual(self.yd.lookup_translations_only('乱麻'), ['решить проблему быстро и решительно, разрубить гордиев узел'])
+        self.assertEqual(self.yd.lookup_translations_only('乱麻'),
+                         ['решить проблему быстро и решительно, разрубить гордиев узел'])
 
     def test_double_h(self):
         self.assertEqual(self.yd.lookup_translations_only('暁には', 'あかつきには'), ['когда; в случае'])
@@ -180,7 +182,7 @@ class YarxiTests(unittest.TestCase):
 
         # 合せる -> 合わせる
         self.assertCountEqual(self.yd.lookup_translations_only('勠せる', 'あわせる'),
-                         ['[при] соединять', 'согласовывать', 'сличать, сопоставлять', 'подсекать (рыбу)'])
+                              ['[при] соединять', 'согласовывать', 'сличать, сопоставлять', 'подсекать (рыбу)'])
 
         # 裡 -> edited の裡に at tango table into just 裡
         self.assertEqual(self.yd.lookup_translations_only('裏', 'うち'), ['〈-no〉 〈~ni〉 в (условиях чего-л.)'])
@@ -201,25 +203,30 @@ class YarxiTests(unittest.TestCase):
 
         # 別かれ -> 別れ
         self.assertCountEqual(self.yd.lookup_translations_only('分かれ', 'わかれ'),
-                         ['отделение, ответвление; развилка', 'расставание, разлука'])
+                              ['отделение, ответвление; развилка', 'расставание, разлука'])
 
         # ちじみあがる -> ちぢみあがる
         self.assertCountEqual(self.yd.lookup_translations_only('縮み上がる', 'ちぢみあがる'), ['сжиматься; съеживаться'])
 
+        # いんなーわあ -> いんなーうぇあ
+
     def test_matching_lexemes(self):
-        self.assertEqual(self.yd.lookup_translations_only('繰り返す', 'くりかえす'), self.yd.lookup_translations_only('繰返す', 'くりかえす'))
-        self.assertEqual(self.yd.lookup_translations_only('相打ち', 'あいうち'), self.yd.lookup_translations_only('相打', 'あいうち'))
+        self.assertEqual(self.yd.lookup_translations_only('繰り返す', 'くりかえす'),
+                         self.yd.lookup_translations_only('繰返す', 'くりかえす'))
+        self.assertEqual(self.yd.lookup_translations_only('相打ち', 'あいうち'),
+                         self.yd.lookup_translations_only('相打', 'あいうち'))
         self.assertEqual(self.yd.lookup_translations_only('空地', 'あきち'), self.yd.lookup_translations_only('空き地', 'あきち'))
         self.assertEqual(self.yd.lookup_translations_only('お前', 'おまえ'), ['《грубо》 ты'])
         self.assertCountEqual(self.yd.lookup_translations_only('前', 'まえ'), ['перед; 〈~ni〉 впереди; 〈~no〉 передний', 'в '
-                                                                                                               '《чьем-л.》 присутствии, перед 《кем-л.》',
-                                                                       '〈~ni〉 раньше; 〈~no〉 прежний, прошлый',
-                                                                       '〈~ni〉 заранее', 'гениталии',
-                                                                       '〈в сочет.〉 передний; впереди; перед 《чем-л.》',
-                                                                       '〈в сочет.〉 раньше 《чего-л.》',
-                                                                       '〈в сочет.〉 заранее', '〈в сочет.〉 порция; доля',
-                                                                       '〈в сочет.〉 《суффикс после имен придворных дам》',
-                                                                       '〈в сочет.〉 《идиоматические сочетания》'])
+                                                                                                                    '《чьем-л.》 присутствии, перед 《кем-л.》',
+                                                                            '〈~ni〉 раньше; 〈~no〉 прежний, прошлый',
+                                                                            '〈~ni〉 заранее', 'гениталии',
+                                                                            '〈в сочет.〉 передний; впереди; перед 《чем-л.》',
+                                                                            '〈в сочет.〉 раньше 《чего-л.》',
+                                                                            '〈в сочет.〉 заранее',
+                                                                            '〈в сочет.〉 порция; доля',
+                                                                            '〈в сочет.〉 《суффикс после имен придворных дам》',
+                                                                            '〈в сочет.〉 《идиоматические сочетания》'])
 
         # print(self.yd.lookup_translations_only('前', 'まえ'), self.yd.lookup_translations_only('前', 'ぜん'))
 
@@ -232,8 +239,10 @@ class YarxiTests(unittest.TestCase):
 
         # 'ra' is missing from okurigana here, but deep search allows to retrieve translation nevertheless
         self.assertEqual(self.yd.lookup_translations_only('逆う', 'さからう', search_mode=SearchMode.shallow_only), [])
-        self.assertEqual(self.yd.lookup_translations_only('逆う', 'さからう', search_mode=SearchMode.deep_only), ['идти против 《чего-л.》'])
-        self.assertEqual(self.yd.lookup_translations_only('逆う', 'さからう', search_mode=SearchMode.consecutive), ['идти против 《чего-л.》'])
+        self.assertEqual(self.yd.lookup_translations_only('逆う', 'さからう', search_mode=SearchMode.deep_only),
+                         ['идти против 《чего-л.》'])
+        self.assertEqual(self.yd.lookup_translations_only('逆う', 'さからう', search_mode=SearchMode.consecutive),
+                         ['идти против 《чего-л.》'])
 
     def test_orders(self):
         # order defines the degree of likeliness that the retrieved entry describes the required word
@@ -241,7 +250,8 @@ class YarxiTests(unittest.TestCase):
         self.assertCountEqual(self.yd.lookup_translations_only('繰返す', order=1), ['повторять, делать снова'])
 
         # order = 2: the candidates with the two topmost probability scores
-        self.assertCountEqual(self.yd.lookup_translations_only('繰返す', order=2), ['рефрен, припев', 'повторение', 'повторять, делать снова'])
+        self.assertCountEqual(self.yd.lookup_translations_only('繰返す', order=2),
+                              ['рефрен, припев', 'повторение', 'повторять, делать снова'])
 
     def test_exceptions(self):
         # bad lexeme
@@ -259,7 +269,6 @@ class YarxiTests(unittest.TestCase):
         # bad search mode value
         with self.assertRaises(Exception):
             self.yd.lookup_translations_only('一', 'いち', search_mode=SearchMode(4))
-
 
     # Time tests:
     #
@@ -301,6 +310,14 @@ class YarxiTests(unittest.TestCase):
     #     self.yd.lookup_translations_only('空地')
     #     end = time.time()
     #     print(f'Average time spent in consecutive search mode (involving deep search): {(end - start) / 10}')
+
+    def test_bad_readings(self):
+        bad = []
+        for e in self.yd._entries:
+            for rd in e.reading:
+                if any(not _is_hiragana(ch) for ch in rd):
+                    bad.append(e)
+        self.assertEqual(bad, [])
 
 
 if __name__ == '__main__':

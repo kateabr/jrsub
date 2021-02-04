@@ -1,5 +1,6 @@
 import unittest
 
+from src.utils import _is_hiragana
 from src.warodai import WarodaiDictionary, WarodaiLoader
 
 
@@ -134,6 +135,16 @@ class MyTestCase(unittest.TestCase):
                                                                          'беречь как зеницу ока'])
         self.assertEqual(self.wd.lookup_translations_only('裏書譲渡'),
                          ['〈~suru〉 делать передаточную надпись, индоссировать, жирировать'])
+
+    def test_bad_readings(self):
+        bad = []
+        for e in self.wd._entries:
+            for rd in e.reading:
+                if any(not _is_hiragana(ch) for ch in rd):
+                    bad.append(e)
+        for b in bad:
+            print(b.eid, b.reading, b.translation)
+        self.assertEqual(bad, [])
 
 
 if __name__ == '__main__':
