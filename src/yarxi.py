@@ -767,7 +767,7 @@ class YarxiLoader:
             else:
                 ext.translation = \
                     [self._in_compounds_pref + [e.rus_nick for e in self._kanji_db.values()
-                                                if e.kanji == ext.lexeme[0]][0]]
+                                                if e.kanji in ext.lexeme and e.rus_nick][0]]
                 self._entries.append(ext)
 
     def rescan(self, fname: str = "../dictionaries/yarxi_3.02.2021.db", transliterate_collocations: bool = True, show_progress: bool = True) -> YarxiDictionary:

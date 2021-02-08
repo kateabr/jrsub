@@ -46,8 +46,10 @@
     </form>
 
     {% if result %}
+    <div class="text-muted" style="margin-top: 30px">Найдено результатов: {{ result|length }}</div>
+    <div class="text-muted">Время поиска: {{ exec_time }} секунд</div>
     {% for item in result %}
-    <h5 style="margin-top: 30px">{{ item.lexeme|join(' / ') }} 〖{{ item.reading|join(' / ') }}〗</h5>
+    <h5 style="margin-top: 20px">{{ item.lexeme|join(' / ') }} 〖{{ item.reading|join(' / ') }}〗</h5>
     <ol>
         {% for tr in item.translation %}
         {% if item.translation|length > 1 %}
