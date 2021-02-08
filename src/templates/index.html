@@ -10,8 +10,7 @@
 <body style="height: 87vh">
 <div class="container" style="margin-top: 40px; margin-bottom: 30px; min-height: 87vh; height: auto !important">
     <form>
-        <p>
-        <div class="btn-group btn-group-toggle" data-toggle="buttons" aria-required="true">
+        <p class="btn-group btn-group-toggle" data-toggle="buttons" aria-required="true">
             <label class="btn btn-secondary active">
                 {% if ((dictionary == 'y') or (not dictionary)) %}
                 <input type="radio" name="dictionary" id="yarxi" value="y" checked required>Yarxi
@@ -26,7 +25,6 @@
                 <input type="radio" name="dictionary" id="warodai" value="w">Warodai
                 {% endif %}
             </label>
-        </div>
         </p>
 
         <div class="input-group mb-3">
@@ -42,7 +40,7 @@
             <input type="text" class="form-control" name="reading" id="reading" aria-label="Default"
                    aria-describedby="inputGroup-sizing-default2" value="{{ reading }}">
         </div>
-        <button type="submit" class="btn btn-primary" onclick="translate()">
+        <button type="submit" class="btn btn-primary" onclick="translate(); return false;">
             <span class="fas fa-search" style="margin-right: 10px"></span>Искать
         </button>
     </form>
@@ -82,7 +80,7 @@
         const lexeme = document.getElementById("lexeme").value;
         const reading = document.getElementById("reading").value;
         if (lexeme !== '') {
-            window.location.replace('/?dictionary=' + dictionary + '&lexeme=' + lexeme + '&reading=' + reading);
+            window.location.replace('/?dictionary=' + dictionary + '&lexeme=' + lexeme.trim() + '&reading=' + reading.trim());
         }
 
     }

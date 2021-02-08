@@ -1659,6 +1659,9 @@ class WarodaiLoader:
                                'タバコwo吹kasu': 'TABAKO 【タバコ】 wo fukasu 【吹かす】'}
     _max_eid: WarodaiEid
 
+    def toggle_transliteration(self, mode: bool):
+        self._transliterate_collocations = mode
+
     def _normalize_kana(self, string: str) -> str:
         if self._transliterate_collocations:
             return self._normalizer[_hiragana_to_latin(string)]
@@ -3788,6 +3791,9 @@ class WarodaiLoader:
             contents = contents.replace('耳が肥えている', '＝耳が｜て～いる')
             contents = contents.replace('<i>разг. замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.</i>',
                                         '<i>разг.</i> замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.')
+            contents = contents.replace('\n～に <i>см. ниже</i> 2;', '')
+            contents = contents.replace('2. действительно, на [самом] деле, фактически, реально; практически, на практике; <i>(в конце предл.)</i> уверяю вас!',
+                                        '2. ～[に] действительно, на [самом] деле, фактически, реально; практически, на практике; <i>(в конце предл.)</i> уверяю вас!')
 
             contents = contents.replace('ё', 'е')
             s_contents = contents.split('\n\n')[1:]

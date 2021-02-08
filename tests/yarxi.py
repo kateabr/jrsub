@@ -96,9 +96,9 @@ class YarxiTests(unittest.TestCase):
 
         # different suggestions for different on'yomi
         self.assertCountEqual(self.yd.lookup_translations_only('音', 'おん'),
-                              ['звук', '«он» (японизированное китайское чтение иероглифа)', '〈в сочет.〉 звук',
-                               '〈в сочет.〉 музыкальный звук', '〈в сочет.〉 звук [как единица речи]',
-                               '〈в сочет.〉 он (китайское чтение иероглифа)', '〈в сочет.〉 весть'])
+                              ['〈в сочет.〉 звук [как единица речи]', '〈в сочет.〉 он (китайское чтение иероглифа)',
+                               '〈в сочет.〉 звук', 'звук', '〈в сочет.〉 весть', '〈в сочет.〉 музыкальный звук',
+                               '«он» (японизированное китайское чтение иероглифа)'])
         self.assertCountEqual(self.yd.lookup_translations_only('音', 'いん'),
                               ['〈в сочет.〉 звук [как единица речи]', '〈в сочет.〉 он (китайское чтение иероглифа)',
                                '〈в сочет.〉 весть'])
@@ -124,6 +124,9 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(
             len([item for item, count in collections.Counter([e.eid for e in self.yd._entries]).items() if count > 1]),
             0)
+
+        for e in [e for e in self.yd._entries if not e.references and not e.translation]:
+            print(e)
 
         # every entry has a translation or a reference to another entry
         self.assertEqual(len([e for e in self.yd._entries if not e.references and not e.translation]), 0)
@@ -163,6 +166,9 @@ class YarxiTests(unittest.TestCase):
         for tr in self.yd.lookup_translations_only('ちょっかいを出す'):
             self.assertIn(tr, self.yd.lookup_translations_only('ちょっかい'))
 
+        self.assertEqual(self.yd.lookup_translations_only('淫りがわしい', 'みだりがわしい'),
+                         self.yd.lookup_translations_only('淫ら', 'みだら'))
+
     def test_likeliness_score(self):
         self.assertEqual(self.yd.lookup_translations_only('聖エルモ'), ['огни святого эльма'])
         self.assertEqual(self.yd.lookup_translations_only('乱麻'),
@@ -181,37 +187,40 @@ class YarxiTests(unittest.TestCase):
 
         # edits made in order to ensure that translation is never empty:
 
-        # 合せる -> 合わせる
+        # 合せる -> 合わせる   +
         self.assertCountEqual(self.yd.lookup_translations_only('勠せる', 'あわせる'),
                               ['[при] соединять', 'согласовывать', 'сличать, сопоставлять', 'подсекать (рыбу)'])
 
-        # 裡 -> edited の裡に at tango table into just 裡
+        # 裡 -> edited の裡に at tango table into just 裡    -
         self.assertEqual(self.yd.lookup_translations_only('裏', 'うち'), ['〈-no〉 〈~ni〉 в (условиях чего-л.)'])
         self.assertEqual(self.yd.lookup_translations_only('裡', 'うち'), self.yd.lookup_translations_only('裏', 'うち'))
 
-        # 逆う -> 逆らう
+        # 逆う -> 逆らう     +
         self.assertEqual(self.yd.lookup_translations_only('忤う', 'さからう'), ['идти против 《чего-л.》'])
 
-        # 華しい -> 華々しい
+        # 華しい -> 華々しい   -
         self.assertEqual(self.yd.lookup_translations_only('花々しい', 'はなばなしい'), ['〈~na〉 яркий, цветущий, прекрасный'])
 
-        # 捻くれる -> 捻れる
+        # 捻くれる -> 捻れる   +
         self.assertEqual(self.yd.lookup_translations_only('拈くれる', 'ひねくれる'), ['быть искривленным; быть замысловатым; '
                                                                              'быть извращенным'])
 
-        # 芽む -> 芽ぐむ
+        # 芽む -> 芽ぐむ     +
         self.assertEqual(self.yd.lookup_translations_only('萌む', 'めぐむ'), ['давать почки; распускаться'])
 
-        # 別かれ -> 別れ
+        # 別かれ -> 別れ +
         self.assertCountEqual(self.yd.lookup_translations_only('分かれ', 'わかれ'),
                               ['отделение, ответвление; развилка', 'расставание, разлука'])
 
-        # ちじみあがる -> ちぢみあがる
+        # ちじみあがる -> ちぢみあがる  +
         self.assertCountEqual(self.yd.lookup_translations_only('縮み上がる', 'ちぢみあがる'), ['сжиматься; съеживаться'])
 
-        # いんなーわあ -> いんなーうぇあ
+        # いんなーわあ -> いんなーうぇあ     +
         self.assertCountEqual(self.yd.lookup_translations_only(lexeme='インナーウェア', reading='いんなあうぇあ'),
-                         ['нательное (нижнее) белье (англ. 《innerware》)', 'нижнее белье'])
+                              ['нательное (нижнее) белье (англ. 《innerware》)', 'нижнее белье'])
+
+        # дюйм\(\англ.#\inchi\#) -> дюйм\(\англ.#\inch\#)
+        # 吋, 吾
 
     def test_matching_lexemes(self):
         self.assertEqual(self.yd.lookup_translations_only('繰り返す', 'くりかえす'),
@@ -220,16 +229,18 @@ class YarxiTests(unittest.TestCase):
                          self.yd.lookup_translations_only('相打', 'あいうち'))
         self.assertEqual(self.yd.lookup_translations_only('空地', 'あきち'), self.yd.lookup_translations_only('空き地', 'あきち'))
         self.assertEqual(self.yd.lookup_translations_only('お前', 'おまえ'), ['《грубо》 ты'])
-        self.assertCountEqual(self.yd.lookup_translations_only('前', 'まえ'), ['перед; 〈~ni〉 впереди; 〈~no〉 передний', 'в '
-                                                                                                                    '《чьем-л.》 присутствии, перед 《кем-л.》',
-                                                                            '〈~ni〉 раньше; 〈~no〉 прежний, прошлый',
-                                                                            '〈~ni〉 заранее', 'гениталии',
-                                                                            '〈в сочет.〉 передний; впереди; перед 《чем-л.》',
-                                                                            '〈в сочет.〉 раньше 《чего-л.》',
-                                                                            '〈в сочет.〉 заранее',
-                                                                            '〈в сочет.〉 порция; доля',
-                                                                            '〈в сочет.〉 《суффикс после имен придворных дам》',
-                                                                            '〈в сочет.〉 《идиоматические сочетания》'])
+        self.assertCountEqual(self.yd.lookup_translations_only('前', 'まえ'),
+                              ['〈в сочет.〉 порция; доля', '〈~ni〉 заранее', '〈в сочет.〉 предшествующий', 'гениталии',
+                               '〈в сочет.〉 заранее', 'перед; 〈~ni〉 впереди; 〈~no〉 передний',
+                               '〈в сочет.〉 《идиоматические сочетания》', '〈~ni〉 раньше; 〈~no〉 прежний, прошлый',
+                               '〈в сочет.〉 передний; впереди; перед 《чем-л.》', '〈в сочет.〉 раньше 《чего-л.》',
+                               '〈в сочет.〉 《суффикс после имен придворных дам》',
+                               'в 《чьем-л.》 присутствии, перед 《кем-л.》'])
+        self.assertCountEqual(self.yd.lookup_translations_only('前', 'ぜん'),
+                              ['〈в сочет.〉 порция; доля', '〈в сочет.〉 предшествующий', '〈в сочет.〉 заранее',
+                               '〈в сочет.〉 《идиоматические сочетания》', '〈в сочет.〉 раньше 《чего-л.》',
+                               '〈в сочет.〉 передний; впереди; перед 《чем-л.》',
+                               '〈в сочет.〉 《суффикс после имен придворных дам》'])
 
         # print(self.yd.lookup_translations_only('前', 'まえ'), self.yd.lookup_translations_only('前', 'ぜん'))
 
