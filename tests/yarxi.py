@@ -68,7 +68,7 @@ class YarxiTests(unittest.TestCase):
         self.assertCountEqual(self.yd.lookup_translations_only('総角', 'あげまき'),
                               ['старинная прическа мальчика (собранные в петли волосы '
                                'крепились над ушами, образуя «рожки»)', 'женская прическа '
-                                                                        'конца xix в.('
+                                                                        'конца xix в. ('
                                                                         'волосы '
                                                                         'закручивались в '
                                                                         'высокий узел и '
@@ -169,6 +169,53 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(self.yd.lookup_translations_only('淫りがわしい', 'みだりがわしい'),
                          self.yd.lookup_translations_only('淫ら', 'みだら'))
 
+        # general translations
+        self.assertEqual(self.yd.lookup_translations_only('加圧', 'かあつ'),
+                         ['подача под давлением, нагнетание; 〈~suru〉 подавать под давлением, нагнетать; 〈~shite〉,'
+                          ' 〈[~no]〉 под давлением'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('結構', 'けっこう'),
+                              ['структура, композиция, построение, архитектоника',
+                               'вполне, довольно, весьма; 〈[~desu]〉 достаточно, хватит, больше не нужно, спасибо',
+                               '〈~na〉 прекрасный, превосходный, великолепный; 〈~desu〉 хорошо!, '
+                               'прекрасно!, замечательно!'])
+
+        self.assertEqual(self.yd.lookup_translations_only('重畳', 'ちょうじょう'),
+                         ['〈~de aru〉 громоздиться; 〈~desu!〉 превосходно!, прекрасно!'])
+
+        self.assertEqual(self.yd.lookup_translations_only('どうやって', 'どうやって'),
+                         ['как?, каким образом?'])
+
+        self.assertEqual(self.yd.lookup_translations_only('何方', 'どなた'),
+                         ['《вежл.》 кто?'])
+
+        self.assertEqual(self.yd.lookup_translations_only('儲かりまっか', 'もうかりまっか'),
+                         ['«как заработки?», стандартное приветствие в осакском диалекте, искаженное  «mo:karimas ka»'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('出だす', 'いだす'),
+                              ['《уст.》 помещать (в печати)', '《уст.》 посылать, отправлять',
+                               '《уст.》 выставлять; высовывать; вынимать; вытаскивать', '《уст.》 давать, выдавать',
+                               '《уст.》 демонстрировать; предъявлять'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('赤裸', 'あかはだか'),
+                              ['〈~no〉 совершенно голый; 〈~de〉 голым', '〈~no〉 абсолютный голый'])
+
+        self.assertEqual(self.yd.lookup_translations_only('葫蘆', 'ころ'),
+                         ['《редк.》 тыква-горлянка'])
+
+        # there are two entries in which both lexeme and reading equal よう: [よう]:[よう] and [よう, 様]:[よう]
+        self.assertCountEqual(self.yd.lookup_translations_only('よう', 'よう'),
+                              ['《частица》 〈~na〉 такой как, похожий, вроде; 〈~ni〉, '
+                               '〈~desu〉 [так] как, подобно; будто; по-видимому, похоже; '
+                               '〈[~ni]〉 [так] чтобы; 〈~ni naru〉 《после глагола показывает, '
+                               'что действие начало совершаться》',
+                               '《частица》 《в начале》 браво!, здорово!, молодцы!',
+                               '《частица》 《заключительная восклицательная частица》',
+                               '〈~na〉 такой как, похожий, вроде; 〈~ni〉, 〈~desu〉 [так] как, подобно; '
+                               'будто; по-видимому, похоже; 〈[~ni]〉 [так] чтобы; 〈~ni naru〉 '
+                               '《после глагола показывает, что действие начало совершаться》',
+                               '《частица》 《в конце》 ну пожалуйста!, ну же!'])
+
     def test_likeliness_score(self):
         self.assertEqual(self.yd.lookup_translations_only('聖エルモ'), ['огни святого эльма'])
         self.assertEqual(self.yd.lookup_translations_only('乱麻'),
@@ -177,7 +224,7 @@ class YarxiTests(unittest.TestCase):
     def test_double_h(self):
         self.assertEqual(self.yd.lookup_translations_only('暁には', 'あかつきには'), ['когда; в случае'])
         self.assertEqual(self.yd.lookup_translations_only('バッハ', 'ばっは'),
-                         ['[иоган себастьян] бах (немецкий композитор,1685-1750 гг.; '
+                         ['[иоган себастьян] бах (немецкий композитор, 1685-1750 гг.; '
                           'нем. 《johann sebastian bach》)'])
 
     def test_no_empty_translations(self):

@@ -299,19 +299,21 @@ class YarxiLoader:
         return self._clean_text(text)
 
     def _clean_text(self, text: str) -> str:
-        text = text.replace('\\_', '')
+        text = text.replace('\\+', '')
+        text = text.replace('!!', '/')
         text = re.sub(r'^_', '', text)
         text = re.sub(r'\[\\\'\'\\\^(.*)\\\'\'\\\]', lambda m: f'(от «{m.group(1)}»)', text)
         text = re.sub(r'(\^[\^|@])', '', text)
         text = re.sub(r'([^\s])_([^\s])', r'\1, \2', text)
         text = re.sub(r'^!', '', text)
         text = re.sub(r"-\\''\\\w+\\''", '', text)
+        text = re.sub(r'(\^r\\-\d+)', '', text)
         text = text.replace('@3(', ' и т.п. (')
         text = text.replace('@3', ' и т.п.')
         text = re.sub(r'(\(#)(.*?)(#\))', r'(\2)', text)
         text = re.sub(r'#(.*?)#', r'\\《\1》\\', text)
         text = text.replace('#', '')
-        text = re.sub(r'(\\\'\'\\)([^\s].*)(\\\'\'\\)', r'\\«\2»\\', text)
+        text = re.sub(r'(\[?\\\'\'(?:\\-)?\\)([^\s].*?)(\\?\'\'\\]?)', r'\\«\2»\\', text)
         text = text.replace('\'', '')
         for _ in [1, 2]:
             text = re.sub(r'([^\(\[《\-\s])\\(《|[\\|\(|#|\w|\d|«|\[])', r'\1 \2', text)
@@ -323,14 +325,20 @@ class YarxiLoader:
         text = re.sub(r'([^\s])\+([^\s])', lambda m: f'{m.group(1)} {m.group(2)}', text)
         text = text.replace('^^', '')
         text = text.replace('= ', ' ')
-        text = re.sub(r'^[^\[]*(\*\d+])', r'[\1', text)
-        text = re.sub(r'(\s?)(\*+=?\d+)',
-                      lambda m: f" 〈~{self._normalize_kana(m.group(2), 'right')}〉",
+        text = re.sub(r'(\s?)(\*+=?\d+)(!?]?)(,?)(\s?)',
+                      lambda m: f" 〈~{self._normalize_kana(m.group(2), 'right')}{m.group(3)}〉{m.group(4)} ",
                       text)
-        text = re.sub(r'(\s?)(\*+-\d+)',
-                      lambda m: f" 〈-{self._normalize_kana(m.group(2), 'left')}〉",
+        text = re.sub(r'(\s?)(\*+-\d+)(,?)(\s?)',
+                      lambda m: f" 〈-{self._normalize_kana(m.group(2), 'left')}〉{m.group(3)} ",
                       text)
+        text = re.sub(r'〈([^〉]+?)]〉', lambda m: f'〈[{m.group(1)}]〉', text)
         text = text.replace('[ 〈', '[〈')
+        text = re.sub(r'《«([^»]+)»》', lambda m: f'«{m.group(1)}»', text)
+        text = text.replace('_', '')
+        text = re.sub(r'(.\\?[!?:;.])([а-яА-Я0-9([])', lambda m: f'{m.group(1)} {m.group(2)}', text)
+        text = re.sub(r'([^\d]),([^=\s])', lambda m: f'{m.group(1)}, {m.group(2)}', text)
+        text = re.sub(r'([^〉]),([^\d\s])', lambda m: f'{m.group(1)}, {m.group(2)}', text)
+        text = text.replace('  ', ' ')
         return text.lower().strip()
 
     def _convert_to_entry_tango(self, info: Tuple[str, str, str, str, str, str, str, str, str]) -> List[YarxiEntry]:
@@ -412,7 +420,7 @@ class YarxiLoader:
                 lexeme = re.sub(r'\^([\w:]+)@?', lambda x: _latin_to_katakana(x.group(1)), lexeme)
                 lexeme = re.sub(r'([\w:]*)', lambda x: _latin_to_hiragana(x.group(1)), lexeme)
             else:
-                lexeme = _latin_to_hiragana(lexeme, False)
+                lexeme = _latin_to_hiragana(lexeme)
 
             if '[' in lexeme:
                 return kanji_for_entry, [re.sub(r'(\[(.*?)\])', '', lexeme).strip(),
@@ -432,8 +440,8 @@ class YarxiLoader:
                 word_refs.extend(re.findall(r'\^20*(\d+)(?:_)?', translation))
 
                 if word_refs:
-                    if re.search(r'^\\?#\\?.*?\\?#\\?\^\d+\\?_', translation) is not None:
-                        mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^\d+\\?_', translation).group(1))
+                    if re.search(r'^\\?#\\?.*?\\?#\\?\^\^?\d+\\?_?', translation) is not None:
+                        mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^\^?\d+\\?_?', translation).group(1))
                         translation = ''
                     else:
                         mode = ''
@@ -446,8 +454,8 @@ class YarxiLoader:
                 kanji_refs.extend(re.findall(r'\^2-0*(\d+)-?(?:\\\'\'\\([\w|\s]+)\\\'\')?', translation))
 
                 if kanji_refs:
-                    if re.search(r'^\\?#\\?.*?\\?#\\?\^\d+\\_', translation) is not None:
-                        mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^\d+\\_', translation).group(1))
+                    if re.search(r'^\\?#\\?.*?\\?#\\?\^[-\d]+\\?_?', translation) is not None:
+                        mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^[-\d]+\\?_?', translation).group(1))
                         translation = ''
                     else:
                         mode = ''
@@ -458,7 +466,7 @@ class YarxiLoader:
                                 lexeme=[self._get_kanji(kanji_ref[0]) + _latin_to_hiragana(kanji_ref[1].strip())],
                                 eid='', mode=mode))
 
-                return res, re.sub(r'(\^+\d-?\d+)(-\\\'\'\\([\w|\s]+)\\\'\'\\)?(?:\\_)?', '', translation)
+                return res, re.sub(r'(\^+\d-?\d+)(-\\\'\'\\([\w|\s]+)\\\'\'\\)?\\?_?', '', translation)
 
             def _split_translation(translation: str) -> List[str]:
                 translation = re.sub(r'^>{2}', '', translation)
@@ -482,7 +490,7 @@ class YarxiLoader:
                 if len(numbered_translations) <= 1:
                     return [common_part]
 
-                return [common_part + tr for tr in numbered_translations]
+                return [common_part + tr for tr in numbered_translations if tr.strip()]
 
             ref_tr = [_extract_reference(tr.strip()) for tr in _split_translation(translation)]
 
@@ -490,8 +498,8 @@ class YarxiLoader:
 
         def _resolve_translations(translation: List[str]) -> List[str]:
             def _clean_translation(translation: str) -> str:
-                generic_translations = {'1': 'мужское имя', '11': 'мужское имя',
-                                        '2': 'женское имя', '22': 'женское имя',
+                generic_translations = {'1': 'мужское имя', '11': 'мужские имена',
+                                        '2': 'женское имя', '22': 'женские имена',
                                         '3': 'фамилия', '33': 'фамилии',
                                         '4': 'псевдоним', '44': 'псевдонимы',
                                         '5': 'топоним', '55': 'топонимы'}
