@@ -8,4 +8,6 @@ COPY src src
 COPY dictionaries/yarxi.jtdb dictionaries/yarxi.jtdb
 COPY dictionaries/warodai.jtdb dictionaries/warodai.jtdb
 
-ENTRYPOINT PYTHONPATH=$PYTHONPATH:/app gunicorn --chdir src flask_demo:app -b 0.0.0.0:5000
+ENV PORT=5000
+
+ENTRYPOINT PYTHONPATH=$PYTHONPATH:/app gunicorn --chdir src flask_demo:app -b 0.0.0.0:$PORT
