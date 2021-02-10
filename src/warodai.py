@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from src.entry import WarodaiEntry
 from src.reference import WarodaiReference
-from src.search import SearchResult,SearchMode
+from src.search import SearchResult, SearchMode
 from src.utils import _hiragana_to_latin, _is_kanji, _is_hira_or_kata, _is_hiragana, _distance
 
 
@@ -137,7 +137,7 @@ class WarodaiDictionary:
                 if ref.prefix:
                     temp_meanings = '; '.join(temp_meanings).split('; ')
                     temp_meanings = [re.sub(r'(〈.+?[〉＿]\s)', '', meaning) for meaning in temp_meanings if
-                                meaning.startswith(ref.prefix)]
+                                     meaning.startswith(ref.prefix)]
 
                     temp_rrefs = [r for r in temp_rrefs if ref.prefix in r.body]
 
@@ -162,7 +162,8 @@ class WarodaiDictionary:
 
     def save(self, fname: str = "default"):
         if fname == 'default':
-            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath('dictionaries/warodai.jtdb')
+            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath(
+                'dictionaries/warodai.jtdb')
         pickle.dump(self, open(fname, "wb"))
 
 
@@ -1525,7 +1526,7 @@ class WarodaiLoader:
                                'to凹mu': 'to hekomu 【凹む】',
                                '坐ru': 'suwaru 【坐る】',
                                '切手wo': 'kitte 【切手】 wo',
-                               '張ru':' haru 【張る】',
+                               '張ru': ' haru 【張る】',
                                'tonameru': 'to nameru',
                                'to舌wo出su': 'to shita 【舌】 wo dasu 【出す】',
                                'to平rageru': 'to tairageru 【平らげる】',
@@ -1667,7 +1668,8 @@ class WarodaiLoader:
             return self._normalizer[_hiragana_to_latin(string)]
         return string
 
-    def rescan(self, fname: str = "../dictionaries/warodai_22.03.2020.txt", transliterate_collocations: bool = True, show_progress: bool = True) -> WarodaiDictionary:
+    def rescan(self, fname: str = "../dictionaries/warodai_22.03.2020.txt", transliterate_collocations: bool = True,
+               show_progress: bool = True) -> WarodaiDictionary:
         self._transliterate_collocations = transliterate_collocations
 
         self._entries, temp_entries = self._load_db(fname, show_progress)
@@ -1712,9 +1714,7 @@ class WarodaiLoader:
                           '骨を折る': ['ほねをおる'],
                           '持たせてやる': ['もたせてやる'],
                           'エデンの国': ['えでんのくに']}
-        for entry in tqdm(temp_entries,
-                          desc="[Warodai] Expanding word database".ljust(34),
-                          disable=not show_progress):
+        for entry in temp_entries:
             likely_duplicate = [e for e in entries_to_add if sorted(e.lexeme) == sorted(entry.lexeme) and
                                 sorted(e.reading) == sorted(entry.reading)]
             if likely_duplicate:
@@ -1756,6 +1756,7 @@ class WarodaiLoader:
                         if not any(ref.prefix in tr for tr in
                                    '; '.join(sum(list(targ_entry.translation.values()), [])).split('; ')):
                             self._entries[i].references[ref_id][j].usable = False
+
             if all(not ref.usable for ref in sum(list(self._entries[i].references.values()), [])) and not self._entries[
                 i].translation:
                 ids_to_delete.append(i)
@@ -1791,7 +1792,10 @@ class WarodaiLoader:
 
             readings = [x.strip() for x in
                         re.split(r'[,･]', re.sub(r'[a-zA-Z]*?', '',
-                               JTran.transliterate_from_kana_to_hira(re.sub(r'[…IV]*', '', rl.group('reading')))).replace('・', '').replace('！', ''))]
+                                                 JTran.transliterate_from_kana_to_hira(
+                                                     re.sub(r'[…IV]*', '', rl.group('reading')))).replace('・',
+                                                                                                          '').replace(
+                            '！', ''))]
 
             return lexemes, readings
 
@@ -2045,7 +2049,8 @@ class WarodaiLoader:
                         num = re.search(b_num_expression, cleaned_translations[i])
                     if num is not None:
                         cur_id = i
-                    elif cleaned_translations[i][0] in ['～', '｜', '＝', '…', '['] or _is_kanji(cleaned_translations[i][0]) \
+                    elif cleaned_translations[i][0] in ['～', '｜', '＝', '…', '['] or _is_kanji(
+                            cleaned_translations[i][0]) \
                             or _is_hira_or_kata(cleaned_translations[i][0]) or cleaned_translations[i].startswith('<i>') \
                             or re.search(r'^[а-ж]\)\s', cleaned_translations[i]) is not None or re.search(r'^[а-я]+',
                                                                                                           cleaned_translations[
@@ -2302,1500 +2307,1509 @@ class WarodaiLoader:
 
     def _load_db(self, fname: str, show_progress: bool = True) -> (List[WarodaiEntry], List[WarodaiEntry]):
         with open(fname, encoding='utf-16le') as f:
-            contents = f.read().replace('<i>искажённое</i>', '<i>искаж.</i>')
-            contents = contents.replace('[…', '…[')
-            contents = contents.replace('…[を, …に]', '…[を(に)]')
-            contents = contents.replace('(<i>сопровождается в конце предложения частицами</i> [に於て]をや)', '')
-            contents = contents.replace('(<i>вежл.</i> お早うございます)', '')
-            contents = contents.replace('(<i>т. н.</i> じょうげん【上元】, ちゅうげん【中元】<i>и</i> かげん【下元】)', '')
-            contents = contents.replace('(<i>сокр.</i> じばん【地盤】, かんばん【看板】, かばん【鞄】)',
-                                        '(<i>сокр.</i> 地盤, 看板, 鞄)')
-            contents = contents.replace('(<i>ант.</i> てがるい【手軽い】)', '')
-            contents = contents.replace(
-                '<i>ист.</i> три царства (<i>а) Япония, Китай, Индия; б) Вэй</i> 魏, <i>У</i> 呉, '
-                '<i>Шу</i> 蜀)',
-                '<i>ист.</i> три царства (Япония, Китай, Индия; Вэй, У, Шу)')
-            contents = contents.replace('продавец насекомых (<i>напр.</i> <a href="#000-22-17">まつむし【松虫】</a>, '
-                                        '<a href="#001-53-38">すずむし【鈴虫】</a>, <i>которые ценятся за издаваемые ими '
-                                        'звуки</i>).',
-                                        'продавец насекомых (<i>которые ценятся за издаваемые ими звуки</i>).')
-            contents = contents.replace('(<i>напр.</i> 5 — <i>ср.</i> <a href="#008-31-45">ごあく【五悪】</a>, '
-                                        '<a href="#006-52-79">ごかい【五戒】</a>, <a href="#009-59-31">ごきょう【五経】</a> <i>и т. '
-                                        'п.</i>)', '')
-            contents = contents.replace(' (<i>напр.</i> 瓜 <i>и</i> 爪)', '')
-            contents = contents.replace(' (<i>напр.</i> ぴかぴか)', '')
-            contents = contents.replace(' (<i>напр.</i> 上, 三, 凸)', '')
-            contents = contents.replace('(<i>напр.</i> 梅の花)', '')
-            contents = contents.replace('(<i>при отвлечённом счёте, ср.</i> ひ【一】, ふ【二】, み【三】)',
-                                        '(<i>при отвлечённом счёте</i>')
-            contents = contents.replace('(<i>из-за созвучия слов</i> <a href="#006-38-91">こおりがし【氷菓子】</a> <i>и</i> <a '
-                                        'href="#007-72-05">こうりがし【高利貸し】</a>)',
-                                        '(<i>из-за созвучия слов</i> 氷菓子 <i>и</i> 高利貸し)')
-            contents = contents.replace('(<i>обычно</i> あまさん【尼さん】)', '(<i>обычно</i> 尼さん)')
-            contents = contents.replace(
-                '(<i>ср.</i> <a href="#006-83-43">にのぜん</a>, <a href="#000-74-07">にのいと</a> <i>и др. слова, '
-                'начинающиеся с</i> にの…【二の…】)', '')
-            contents = contents.replace(' (<i>см.</i> しょうぎょうほうそう【商業放送】)', '')
-            contents = contents.replace('(<i>англ.</i> baby <i>и яп.</i> たんす【簞笥】)',
-                                        '(<i>англ.</i> baby <i>и яп.</i> 簞笥)')
-            contents = contents.replace('好い気味だ', '～だ')
-            contents = contents.replace('…[の]模様だ', '…[の]～だ')
-            contents = contents.replace('宜なるかな', '～なるかな')
-            contents = contents.replace('胸糞が悪い', '～が悪い')
-            contents = contents.replace('糞味噌にけなす', '～にけなす')
-            contents = contents.replace('</i> いわざる, きかざる, みざる <i>—', '')
-            contents = contents.replace('ぽきんと折れる', '～折れる')
-            contents = contents.replace('ぺちゃくちゃしゃべる', '～しゃべる')
-            contents = contents.replace('べちゃべちゃしゃべる', '～しゃべる')
-            contents = contents.replace('へとへとに疲れる', '～に疲れる')
-            contents = contents.replace('ぶらぶら下がる', '～下がる')
-            contents = contents.replace('[足の]踏み所もない', '…[足の]～もない')
-            contents = contents.replace('…の顰に傚う', '…の～に傚う')
-            contents = contents.replace(
-                '(<i>8 февраля, в Киото 8 декабря, день подношения храму Авасима сломанных иголок, '
-                'накопившихся за год; в этот день отдыхают от шитья; Храм Авасима был избран потому, '
-                'что иначе назывался</i> Хариса́йнё 婆利才女)', '')
-            contents = contents.replace('腹鼓を打つ', '～を打つ')
-            contents = contents.replace('腹ごなしに散歩する', '～に散歩する')
-            contents = contents.replace(' 明州', '')
-            contents = contents.replace('にゃおと鳴く', '～と鳴く')
-            contents = contents.replace('にたりと笑う', '～と笑う')
-            contents = contents.replace('どたりと落ちる', '～と落ちる')
-            contents = contents.replace('頬杖を突く', '～を突く')
-            contents = contents.replace('付きが良い', '～が良い')
-            contents = contents.replace('手枕をして寝る', '～をして寝る')
-            contents = contents.replace('外輪(鰐)の足', '～の足')
-            contents = contents.replace('金離れの悪い', '～の悪い')
-            contents = contents.replace('(<i>от кит.</i> сянь 仙)', '(<i>от кит.</i> 仙 [сянь])')
-            contents = contents.replace('…は世間知らずだ', '…は～だ')
-            contents = contents.replace('ずでんどうと倒れる', '～と倒れる')
-            contents = contents.replace('じろじろ見る', '～見る')
-            contents = contents.replace('しんにゅうをかけて言う', '～をかけて言う')
-            contents = contents.replace('さめざめと泣く', '～と泣く')
-            contents = contents.replace('ごろりと寝転ぶ', '～と寝転ぶ')
-            contents = contents.replace('(<i>санскр.</i> Pañca Skandhāh: 色 <i>плоть</i>, 受 <i>ощущения и чувства</i>, '
-                                        '想 <i>воображение</i>, 行 <i>духовная деятельность</i>, 識 <i>познание</i>)', '')
-            contents = contents.replace('こっくりこっくりやる(居眠りをする)', '～やる, ～居眠りをする')
-            contents = contents.replace('ぐりはまに行く', '～に行く')
-            contents = contents.replace('(<i>сокр.</i> 多伽羅, <i>санскр.</i> tagara)',
-                                        '(<i>сокр.</i> 多伽羅) (<i>санскр.</i> tagara)')
-            contents = contents.replace('きゃっと叫ぶ', '～叫ぶ')
-            contents = contents.replace('お聞きに入れる', '～に入れる')
-            contents = contents.replace('陰(蔭)口をいう(利く)', '～をいう, ～を利く')
-            contents = contents.replace('追い立てを食う', '～を食う')
-            contents = contents.replace('遺腹の子', '～の子')
-            contents = contents.replace('居心地のよい', '～のよい')
-            contents = contents.replace('主顔に振る舞う', '～に振る舞う')
-            contents = contents.replace('からからと笑う', '～と笑う')
-            contents = contents.replace('相々傘で行く', '～で行く')
-            contents = contents.replace('愛想尽かしを言う', '～を言う')
-            contents = contents.replace('相槌を打つ', '～を打つ')
-            contents = contents.replace('飽くことを知らぬ', '～ことを知らぬ')
-            contents = contents.replace('あけっぴろげの笑いを浮べる', '～の笑いを浮べる')
-            contents = contents.replace('明け残る空', '～空')
-            contents = contents.replace('足拵えを厳重にする', '～を厳重にする')
-            contents = contents.replace('足触りがよい', '～がよい')
-            contents = contents.replace('足なれた人', '～人')
-            contents = contents.replace('足湯を使う', '～を使う')
-            contents = contents.replace(
-                'атэдзи, искусственно (неправильно) подобранные иероглифы <i>(1) иероглифы, которыми пишутся некоторые слова японского и реже китайского происхождения по смыслу слова в целом, а не по обычному чтению каждого иероглифа в отдельности:</i> 平時 <i>для слова</i> ицумо <i>«всегда, обычно»;</i> 真実 <i>для слова</i> хонто: <i>«правда, истина»; 2) иероглифы, употреблённые чисто фонетически:</i> 目出度く мэдэтаку <i>«успешно»)</i>',
-                'атэдзи\n1) <i>иероглифы, которыми '
-                'пишутся некоторые слова японского и реже китайского происхождения по смыслу слова в целом, '
-                'а не по обычному чтению каждого иероглифа в отдельности</i>;\n2) <i>иероглифы, употреблённые чисто '
-                'фонетически</i>')
-            contents = contents.replace('跡白浪と逃げる(消えてしまう)', '～と逃げる, ～消えてしまう')
-            contents = contents.replace('あぶあぶいう, あぶあぶやる', '～いう, ～やる')
-            contents = contents.replace('雨まじりの雪', '～の雪')
-            contents = contents.replace('荒胆をひしぐ(抜く)', '～をひしぐ, ～を抜く)')
-            contents = contents.replace('<i>см.</i> <a href="#003-07-11">ぎしん【疑心】</a>.',
-                                        '<i>посл.</i> у страха глаза велики (<i>букв.</i> страх порождает чёрных чертей).')
-            contents = contents.replace('…は偉とするに足る', '…は～とするに足る')
-            contents = contents.replace('言い出しっ屁だから君からやりたまえ', '～だから君からやりたまえ')
-            contents = contents.replace('生き恥をさらす', '～をさらす')
-            contents = contents.replace('一議に及ばず', '～に及ばず')
-            contents = contents.replace('一物あらば一累/ルイ/を添う', '一物あらば一累を添う')
-            contents = contents.replace('一眸の中/ウチ/に収める', '～の中/ウチ/に収める')
-            contents = contents.replace('一騎当千のつわもの', '～のつわもの')
-            contents = contents.replace('一炊の夢/ユメ/', '～の夢/ユメ/')
-            contents = contents.replace('一寸逃れを云う', '～を云う')
-            contents = contents.replace('いっちょういきましょう', '～いきましょう')
-            contents = contents.replace('一敗地に塗れる', '～地に塗れる')
-            contents = contents.replace('一風変わった男', '～変わった男')
-            contents = contents.replace('逸を以て労を待つ', '～を以て労を待つ')
-            contents = contents.replace('田舎っぽく見える', '～見える')
-            contents = contents.replace('居抜きのままで買う', '～のままで買う')
-            contents = contents.replace('命からがら逃げる', '～逃げる')
-            contents = contents.replace('命勝負と申す', '～と申す')
-            contents = contents.replace('意表に出る', '～に出る')
-            contents = contents.replace('居待の月', '～の月')
-            contents = contents.replace('今迄の所', '～の所')
-            contents = contents.replace('今までずっと', '～ずっと')
-            contents = contents.replace('色気抜きで飲む', '～で飲む')
-            contents = contents.replace('色よい返事', '～返事')
-            contents = contents.replace('曰く付きの女', '～の女')
-            contents = contents.replace('…と言わず', '…と～')
-            contents = contents.replace('と言わぬばかりに', '…と～ばかりに')
-            contents = contents.replace('浮かぬ顔をする', '～顔をする')
-            contents = contents.replace('浮河竹に身を沈める', '～に身を沈める')
-            contents = contents.replace('烏合の衆', '～の衆')
-            contents = contents.replace('…に後手に縛る', '…に～に縛る')
-            contents = contents.replace('後指を差す', '～を差す')
-            contents = contents.replace('嘘八百を並べ立てる', '～を並べ立てる')
-            contents = contents.replace('梲が上がらない', '～が上がらない')
-            contents = contents.replace('内八文字を切る', '～を切る')
-            contents = contents.replace('腕っぷしの強い男', '～の強い男')
-            contents = contents.replace('兔の毛でついたほどのすきもない', '～でついたほどのすきもない')
-            contents = contents.replace('有髪の尼', '～の尼')
-            contents = contents.replace('怨みっこのないように, 怨みっこなしに', '～のないように, ～なしに')
-            contents = contents.replace('рыбы а́ю (鮎)', 'рыбы а́ю')
-            contents = contents.replace('嬉し泣きに泣く', '～に泣く')
-            contents = contents.replace('上の空', '～の空')
-            contents = contents.replace('得も言われぬ', '～も言われぬ')
-            contents = contents.replace('依估の沙汰/サタ/', '～の沙汰/サタ/')
-            contents = contents.replace('…は嘔吐く', '…は～')
-            contents = contents.replace('得体の知れない', '～の知れない')
-            contents = contents.replace('笑壷に入/イ/る', '～に入/イ/る')
-            contents = contents.replace('燕趙悲歌の士', '～の士')
-            contents = contents.replace('猿臂を伸ばす', '～を伸ばす')
-            contents = contents.replace('おいおい泣く', '～泣く')
-            contents = contents.replace('老恥をかく', '～をかく')
-            contents = contents.replace('大胡坐をかく', '～をかく')
-            contents = contents.replace('大腐りに腐って', '～に腐って')
-            contents = contents.replace('大雀の鉄砲', '～の鉄砲')
-            contents = contents.replace('大味噌を付ける', '～を付ける')
-            contents = contents.replace('…を大目に見る', '…を～に見る')
-            contents = contents.replace('大揉めに揉める', '～に揉める')
-            contents = contents.replace('お蚕ぐるみでいる', '～でいる')
-            contents = contents.replace('<i>то же, что</i> おかえりなさい, <i>см.</i> <a href="#003-89-20">かえる【帰る】</a>.',
-                                        '～なさい добро пожаловать! <i>(приветствие члену семьи, вернувшемуся домой со службы, из школы '
-                                        'и т. п.)</i>;')
-            contents = contents.replace('(= おかえりなさい) <i>см.</i> <a href="#003-89-20">かえる【帰る】</a>',
-                                        '<i>см.</i> <a href="000-10-29">おかえり【お帰り】 2 (～なさい)</a>')
-            contents = contents.replace('奥さん孝行の夫', '～の夫')
-            contents = contents.replace('恐れ気もなく', '～もなく')
-            contents = contents.replace('お手の筋だ', '～だ')
-            contents = contents.replace('男泣きに泣く', '～に泣く')
-            contents = contents.replace('お見外れ申しました', '～申しました')
-            contents = contents.replace('親分風を吹かす', '～を吹かす')
-            contents = contents.replace('…は女癖が悪い', '…は～が悪い')
-            contents = contents.replace('お乳母日傘で育てる', '～で育てる')
-            contents = contents.replace(', <i>ср.</i> <a href="#005-96-67">ごぎょう【五行】</a>', '')
-            contents = contents.replace('華を去り実/ジツ/に就く', '～を去り実/ジツ/に就く')
-            contents = contents.replace(
-                '<i>(напр. образование из</i> 山, 上, 下 <i>иероглифа</i> 峠<i>)</i>; <i>ср.</i> <a '
-                'href="#008-24-88">りくしょ【六書】</a>', '')
-            contents = contents.replace('会員外の者', '～の者')
-            contents = contents.replace('快哉を叫ぶ', '～を叫ぶ')
-            contents = contents.replace(', напр.</i> 河, 峰<i>', '')
-            contents = contents.replace('掻い撫での作者', '～の作者')
-            contents = contents.replace('顔向けが出来ない, 顔向けならぬ', '～が出来ない, ～ならぬ')
-            contents = contents.replace('掛かりつけの医者', '～の医者')
-            contents = contents.replace('加冠の式', '～の式')
-            contents = contents.replace('書き具合がいい', '～がいい')
-            contents = contents.replace('掛心地のよい', '～のよい')
-            contents = contents.replace('瘡気と自惚/ウヌボ/れのないものはない', '瘡気と自惚れのないものはない')
-            contents = contents.replace('華胥の国に遊ぶ', '～の国に遊ぶ')
-            contents = contents.replace('華燭の典 ', '～の典 ')
-            contents = contents.replace('拍手を打つ', '～を打つ')
-            contents = contents.replace('加除式のノート', '～のノート')
-            contents = contents.replace('(黄河, <i>букв.</i> жёлтой реки) станут голубыми (清)',
-                                        '(<i>букв.</i> жёлтой реки) станут голубыми')
-            contents = contents.replace('片息をつく', '～をつく')
-            contents = contents.replace('肩車に乗せる', '～に乗せる')
-            contents = contents.replace('かたりと音を立てて落ちる', '～と音を立てて落ちる')
-            contents = contents.replace('片ガラスの時計', '～の時計')
-            contents = contents.replace('隔靴掻痒の感がある', '～の感がある')
-            contents = contents.replace('齧り付き主義を取る', '～を取る')
-            contents = contents.replace('竈持ちのよい女', '～のよい女')
-            contents = contents.replace('からころ音を立てる', '～音を立てる')
-            contents = contents.replace('かるが故に', '～が故に')
-            contents = contents.replace('驩を交じえる', '～を交じえる')
-            contents = contents.replace('侃々諤々の論', '～の論')
-            contents = contents.replace('汗顔の至りである', '～の至りである')
-            contents = contents.replace('神ながらの道', '～の道')
-            contents = contents.replace('神嘗の祭/マツリ/', '～の祭/マツリ/')
-            contents = contents.replace('幹部級の人', '～の人')
-            contents = contents.replace('完膚なきまで', '～なきまで')
-            contents = contents.replace('管鮑の交わり', '～の交わり')
-            contents = contents.replace('官僚畑の政治家', '～の政治家')
-            contents = contents.replace('画餅に帰する', '～に帰する')
-            contents = contents.replace('がみがみ言う', '～言う')
-            contents = contents.replace('(<i>сокр.</i> 僧伽藍摩, <i>санскр.</i> Samgharama)',
-                                        '(<i>сокр.</i> 僧伽藍摩) (<i>санскр.</i> Samgharama)')
-            contents = contents.replace('側[の者]', '～[の者]')
-            contents = contents.replace('雁字搦み(め)に縛る', '～に縛る')
-            contents = contents.replace('頑丈作りの男', '～の男')
-            contents = contents.replace('旗印の下に', '～の下に')
-            contents = contents.replace('古事記 ', '')
-            contents = contents.replace(' 日本書紀', '')
-            contents = contents.replace('きしきし鳴る', '～鳴る')
-            contents = contents.replace('帰心矢のごとし', '～矢のごとし')
-            contents = contents.replace('喜字の齢/ヨワイ/', '～の齢/ヨワイ/')
-            contents = contents.replace('驥足を伸ばす', '～を伸ばす')
-            contents = contents.replace('後朝の別れ', '～の別れ')
-            contents = contents.replace('九牛の一毛/イチモウ/', '～の一毛/イチモウ/')
-            contents = contents.replace('九五の位/クライ/', '～の位/クライ/')
-            contents = contents.replace('九仞の功/コウ/を一簣/イッキ/に虧/カ/く', '九仞の功を一簣に虧く')
-            contents = contents.replace('虚々実々の戦術', '～の戦術')
-            contents = contents.replace('曲学阿世の徒', '～の徒')
-            contents = contents.replace('遽然として退場する', '～として退場する')
-            contents = contents.replace('居然として動かない', '～として動かない')
-            contents = contents.replace('巨歩を進める', '～を進める')
-            contents = contents.replace('きょろきょろ眺める, 目をきょろきょろさせる', '～眺める, ＝目を～させる')
-            contents = contents.replace('きりょう自慢の娘', '～の娘')
-            contents = contents.replace('槿花一日の栄', '～の栄')
-            contents = contents.replace('槿花一朝の夢', '～の夢')
-            contents = contents.replace('金枝玉葉[の身]', '～[の身]')
-            contents = contents.replace(' (琴)', '')
-            contents = contents.replace('琴瑟相和/アイワ/す[る]', '～相和/アイワ/す[る]')
-            contents = contents.replace('ぎすばった顔付', '～顔付')
-            contents = contents.replace('ぎちぎち言う音', '～言う音')
-            contents = contents.replace('牛歩で進む', '～で進む')
-            contents = contents.replace('魚腹に葬られる, 魚腹を肥/コ/やす', '～に葬られる, ～を肥/コ/やす')
-            contents = contents.replace('ぎらりと光る', '～と光る')
-            contents = contents.replace('ぎりぎり歯を鳴らす', '～歯を鳴らす')
-            contents = contents.replace('ぎーぎーいう, ぎーぎー音がする', '～いう, ～音がする')
-            contents = contents.replace('苦学力行の士', '～の士')
-            contents = contents.replace('口利き役を買って出る', '～を買って出る')
-            contents = contents.replace('口ぎれいな事を言う', '～な事を言う')
-            contents = contents.replace('口拍子を取る', '～を取る')
-            contents = contents.replace('くっくと笑う', '～と笑う')
-            contents = contents.replace('苦肉の計(策)', '～の計(策)')
-            contents = contents.replace('首斬り反対を叫ぶ', '～を叫ぶ')
-            contents = contents.replace('隈ない月光', '～月光')
-            contents = contents.replace('倉作りの家', '～の家')
-            contents = contents.replace('呉れ得の貰い損', '～の貰い損')
-            contents = contents.replace('黒山の様な人だかり', '～の様な人だかり')
-            contents = contents.replace('(знаки, <i>напр.</i> 一, 二, 三, 上, 中, 下, レ, <i>указывающие',
-                                        '(<i>знаки, указывающие')
-            contents = contents.replace('具眼の士', '～の士')
-            contents = contents.replace('ぐしゃぐしゃにこわれる', '～にこわれる')
-            contents = contents.replace('ぐっすり眠る', '～眠る')
-            contents = contents.replace('ぐつぐつ煮る', '～煮る')
-            contents = contents.replace('ぐてんぐてんに酔っぱらう', '～に酔っぱらう')
-            contents = contents.replace('ぐびりぐびり飲む', '～飲む')
-            contents = contents.replace('傾国の美人', '～の美人')
-            contents = contents.replace('決河の勢で', '～の勢で')
-            contents = contents.replace('闕下に伏奏す', '～に伏奏す')
-            contents = contents.replace('逆鱗に触れる', '～に触れる')
-            contents = contents.replace('下司口を利く', '～を利く')
-            contents = contents.replace('げっそり痩せる', '～痩せる')
-            contents = contents.replace('原級留置の生徒', '～の生徒')
-            contents = contents.replace('…目に遭わせる', '…目に～')
-            contents = contents.replace('げーげーする(言う)', '～する, ～言う')
-            contents = contents.replace('小当りに当って見る', '～に当って見る')
-            contents = contents.replace('好奇の念', '～の念')
-            contents = contents.replace('公聞に達する', '～に達する')
-            contents = contents.replace('ここと鳴く', '～と鳴く')
-            contents = contents.replace('心行くばかり', '～ばかり')
-            contents = contents.replace('小腰を屈める', '～を屈める')
-            contents = contents.replace('こつんと頭を打ちつける', '～と頭を打ちつける')
-            contents = contents.replace('ことりと音がした', '～と音がした')
-            contents = contents.replace('この段御通知申し上げます', '～御通知申し上げます')
-            contents = contents.replace('鼓腹撃壌の民/タミ/', '～の民/タミ/')
-            contents = contents.replace('小股に歩く', '～に歩く')
-            contents = contents.replace('◇小股をすくう', '～をすくう')
-            contents = contents.replace('小耳に挟む', '～に挟む')
-            contents = contents.replace('こりこり音がする', '～音がする')
-            contents = contents.replace('こんがりと焼けている', '～と焼けている')
-            contents = contents.replace('豪の者', '～の者')
-            contents = contents.replace('傲慢不遜な', '～な')
-            contents = contents.replace('ごくりと飲む', '～と飲む')
-            contents = contents.replace('五節の舞/マイ/', '～の舞/マイ/')
-            contents = contents.replace('ごつんと打つ', '～と打つ')
-            contents = contents.replace('…の伍伴に入/ハイ/る', '…の～に入/ハイ/る')
-            contents = contents.replace('五倫[の道/ドウ/]', '～[の道/ドウ/]')
-            contents = contents.replace('ごーんと鳴る', '～と鳴る')
-            contents = contents.replace('逆帆を食う', '～を食う')
-            contents = contents.replace('酒虫が起る', '～が起る')
-            contents = contents.replace('避くべき事', '～事')
-            contents = contents.replace('探り足で行く', '～で行く')
-            contents = contents.replace('差しぐむ涙', '～涙')
-            contents = contents.replace('砂上の楼閣/ロウカク/', '～の楼閣/ロウカク/')
-            contents = contents.replace('札びらを切る', '～を切る')
-            contents = contents.replace('薩摩守を決めこむ', '～を決めこむ')
-            contents = contents.replace('里腹三日/サンニチ/', '里腹三日')
-            contents = contents.replace('Ма-Хан</i> 馬韓, <i>Пйон-Хан</i> 弁韓 <i>и Син-Хан</i> 辰韓; <i>',
-                                        'Ма-Хан, Пйон-Хан и Син-Хан; ')
-            contents = contents.replace('三顧の礼をとる', '～の礼をとる')
-            contents = contents.replace('三舟の才', '～の才')
-            contents = contents.replace('三寸の舌/シタ/を振う', '～の舌/シタ/を振う')
-            contents = contents.replace('三船の才', '～の才')
-            contents = contents.replace('【三舟】(の才)', '【三舟】(の才)')
-            contents = contents.replace('酸鼻を極めた', '～を極めた')
-            contents = contents.replace('ざくりと包丁を入れる', '～と包丁を入れる')
-            contents = contents.replace('ざぶりと湯に入/ハイ/る', '～[と]湯に入/ハイ/る')
-            contents = contents.replace('ざぶんと飛び込む', '～[と]飛び込む')
-            contents = contents.replace('匹股を踏む', '～を踏む')
-            contents = contents.replace('獅子奮迅の勢いで', '～の勢で')
-            contents = contents.replace('七分の二', '～の二')
-            contents = contents.replace('七歩の才/サイ/', '～の才')
-            contents = contents.replace('しめこの兔/ウサギ/', '～の兔')
-            contents = contents.replace('(歩) ', '')
-            contents = contents.replace('社稷の臣', '～の臣')
-            contents = contents.replace('しゃっちょこ立ちしても及ばない', '～しても及ばない')
-            contents = contents.replace('…は宗旨違いだ', '…は～だ')
-            contents = contents.replace('首鼠両端を持/ジ/す', '～両端を持/ジ/す')
-            contents = contents.replace('出処進退を誤らず', '～を誤らず')
-            contents = contents.replace('出藍の誉/ホマレ/がある', '～の誉/ホマレ/がある')
-            contents = contents.replace('しらを切る', '～を切る')
-            contents = contents.replace('尻居に倒れる', '～に倒れる')
-            contents = contents.replace('尻馬に乗る', '～に乗る')
-            contents = contents.replace('尻餅をつく', '～をつく')
-            contents = contents.replace('心身にこたえる', '～にこたえる')
-            contents = contents.replace('自家薬籠中の物とする', '～の物とする')
-            contents = contents.replace('自成の人', '～の人')
-            contents = contents.replace('地団駄[を]踏む', '～[を]踏む')
-            contents = contents.replace('自知の明/メイ/がある', '～の明/メイ/がある')
-            contents = contents.replace('事務系統の職員(従業員)', '～の職員, ～の従業員')
-            contents = contents.replace('十中の八九まで', '～の八九まで')
-            contents = contents.replace('…の術中に陥る', '…の～に陥る')
-            contents = contents.replace('…のため寿盃を挙げる', '…のため～を挙げる')
-            contents = contents.replace('順風満帆のうち', '～のうち')
-            contents = contents.replace('上巳の節句/セック/', '～の節句/セック/')
-            contents = contents.replace('冗談事じゃない', '～じゃない')
-            contents = contents.replace('人後に落ちない', '～に落ちない')
-            contents = contents.replace('水魚の交わり', '～の交わり')
-            contents = contents.replace('すいすい[と]飛ぶ', '～[と]飛ぶ')
-            contents = contents.replace('陬遠の地', '～の地')
-            contents = contents.replace('趨否を決する', '～を決する')
-            contents = contents.replace('好き合って夫婦になる', '～夫婦になる')
-            contents = contents.replace('すってんころりんと転ぶ', '～転ぶ')
-            contents = contents.replace('すとんところぶ', '～ころぶ')
-            contents = contents.replace('住心地のよい', '～のよい')
-            contents = contents.replace('擦れ違いに行き過ぎる', '～に行き過ぎる')
-            contents = contents.replace('座り心地がいい', '～がいい')
-            contents = contents.replace('寸々に切る', '～に切る')
-            contents = contents.replace('ずぶりと刺す', '～[と]刺す')
-            contents = contents.replace('ずぶ六に酔う(なる)', '～に酔う, ～になる')
-            contents = contents.replace('ずるりと落ちる', '～と落ちる')
-            contents = contents.replace('臍下丹田に力を入れる', '～に力を入れる')
-            contents = contents.replace('生殺与奪の権', '～の権')
-            contents = contents.replace('生死不明の人', '～の人')
-            contents = contents.replace('政治家肌の人', '～の人')
-            contents = contents.replace('聖聞に達する', '～に達する')
-            contents = contents.replace('世外に起然とする', '～に起然とする')
-            contents = contents.replace('尺寸の地 ', '～の地 ')
-            contents = contents.replace('潜航艇式の遣り方', '～の遣り方')
-            contents = contents.replace('千仞の谷', '～の谷')
-            contents = contents.replace('先鞭を着ける', '～を着ける')
-            contents = contents.replace('; <i>напр.</i> 眼科専門医 офтальмолог', '')
-            contents = contents.replace('贅沢三昧に暮す', '～に暮す')
-            contents = contents.replace('漸を追(逐)って', '～追(逐)って')
-            contents = contents.replace('…に全人格を傾倒する', '…に～を傾倒する')
-            contents = contents.replace('禅門に入/ハイ/る', '～に入/ハイ/る')
-            contents = contents.replace('前略[御免下さい]', '～[御免下さい]')
-            contents = contents.replace('箏の琴/コト/', '～の琴/コト/')
-            contents = contents.replace('…が捜査線上に現われる(浮ぶ)', '…が～に現われる, …が～に浮ぶ')
-            contents = contents.replace('壮士風の男', '～の男')
-            contents = contents.replace('宋襄の仁/ジン/', '～の仁/ジン/')
-            contents = contents.replace('鏘然として鳴る', '～として鳴る')
-            contents = contents.replace('総ルビの本', '～の本')
-            contents = contents.replace('足労をかける', '～をかける')
-            contents = contents.replace('外八文字を切る', '～を切る')
-            contents = contents.replace('俗耳に入/イ/る', '～に入/イ/る')
-            contents = contents.replace('高あぐらをかく', '～をかく')
-            contents = contents.replace('…は高手小手に縛られた', '…は～に縛られた')
-            contents = contents.replace('高見の見物をする', '～の見物をする')
-            contents = contents.replace('田毎の月/ツキ/', '～の月')
-            contents = contents.replace('多士済々/セイセイ/', '～済々/セイセイ/')
-            contents = contents.replace('立ち竦みの状態である', '～の状態である')
-            contents = contents.replace('…の中/ウチ/に立ち交る', '…の中/ウチ/に～')
-            contents = contents.replace('酒は憂/ウレ/いの玉ぼうき', '酒は憂いの玉ぼうき')
-            contents = contents.replace('太郎と花子/ハナコ/', '太郎と花子')
-            contents = contents.replace('大尽風を吹かす', '～を吹かす')
-            contents = contents.replace(' 大阪毎日[新聞]', '')
-            contents = contents.replace('…に卵を抱かす', '…に卵を～')
-            contents = contents.replace('出しっ放しにして置く', '～にして置く')
-            contents = contents.replace('脱兔の如く', '～の如く')
-            contents = contents.replace('だらしがない', '～がない')
-            contents = contents.replace(' (<i>не смешивать с формой связки</i> だ)', '')
-            contents = contents.replace('弾丸黒子の地', '～の地')
-            contents = contents.replace('断腸の思いがする', '～の思いがする')
-            contents = contents.replace('千鳥形に進む', '～に進む')
-            contents = contents.replace('ちゃきちゃきはさむ', '～はさむ')
-            contents = contents.replace('ちゃっかりしている', '～している')
-            contents = contents.replace('茶屋酒の味を覚える', '～の味を覚える')
-            contents = contents.replace('超然主義を取る', '～を取る')
-            contents = contents.replace('頂門の一針', '～の一針')
-            contents = contents.replace('直情径行型の人', '～の人')
-            contents = contents.replace('ちょこんと木に止まる', '～木に止まる')
-            contents = contents.replace('ちょっかいを出す', '～を出す')
-            contents = contents.replace('…の枕席に侍/ジ/す', '…の～に侍/ジ/す')
-            contents = contents.replace(
-                '<i>(слово-каламбур, основанное на том, что иероглиф</i> 百 <i>без верхней черты, т. е. 100 '
-                'минус 1, имеет вид</i> 白 <i>«белый»)</i>', '')
-            contents = contents.replace('(妻 <i>здесь заменяет</i> 爪)', '')
-            contents = contents.replace('強腰に出る', '～に出る')
-            contents = contents.replace('手置きが悪い', '～が悪い')
-            contents = contents.replace('敵影を認めず, 敵影無し', '～を認めず, ～無し')
-            contents = contents.replace('てくで歩く', '～で歩く')
-            contents = contents.replace('てくてく歩く', '～歩く')
-            contents = contents.replace('手ぐすねを引く, 手ぐすねを引いて待っている', '～を引く, ～を引いて待っている')
-            contents = contents.replace('手玉に取る', '～に取る')
-            contents = contents.replace('鉄火肌の女', '～の女')
-            contents = contents.replace('轍鮒の急', '～の急')
-            contents = contents.replace('手鼻をかむ', '～をかむ')
-            contents = contents.replace('天金の本', '～の本')
-            contents = contents.replace('椽大の筆を揮う', '～の筆を揮う')
-            contents = contents.replace(
-                '<i>(напр.</i> お <i>иероглифа</i> 悪 <i>в знач. «ненависть» при более частом</i> あく <i>в '
-                'знач. «зло»)</i>', '')
-            contents = contents.replace('天聴に達する', '～に達する')
-            contents = contents.replace('陶然と酔う', '～と酔う')
-            contents = contents.replace('刀筆の吏', '～の吏')
-            contents = contents.replace('遠耳が利く', '～が利く')
-            contents = contents.replace('年甲斐も無い', '～も無い')
-            contents = contents.replace('とっぽいやつ', '～やつ')
-            contents = contents.replace('飛び切りをやる', '～をやる')
-            contents = contents.replace('同学の友', '～の友')
-            contents = contents.replace('同姓同名の人', '～の人')
-            contents = contents.replace('同体に落ちる', '～に落ちる')
-            contents = contents.replace('どうと倒れる', '～倒れる')
-            contents = contents.replace('道徳堅固の人', '～の人')
-            contents = contents.replace('どかんと落ちる', '～落ちる')
-            contents = contents.replace('度外して置く', '～して置く')
-            contents = contents.replace('独酌で飲む', '～で飲む')
-            contents = contents.replace('…の毒手にかかる', '…の～にかかる')
-            contents = contents.replace('…の毒刃に倒れる', '…の～に倒れる')
-            contents = contents.replace('どじを踏む', '～を踏む')
-            contents = contents.replace('どでん買越/カイコ/す(うりこす)', '～買越/カイコ/す, ～うりこす')
-            contents = contents.replace('怒髪天を突く', '～天を突く')
-            contents = contents.replace('どぶんと落ちる', '～落ちる')
-            contents = contents.replace('どろんを決める', '～を決める')
-            contents = contents.replace('内顧の憂い(煩い)', '～の憂い, ～の煩い')
-            contents = contents.replace('長葉の石持草/イシモチソー/', '～の石持草/イシモチソー/')
-            contents = contents.replace('亡き数に入/ハイ/る', '～に入/ハイ/る')
-            contents = contents.replace('泣き通しに泣く', '～に泣く')
-            contents = contents.replace('慰めようもなく, 慰めようもないほど', '～もなく, ～もないほど')
-            contents = contents.replace('名乗りをあげる', '～をあげる')
-            contents = contents.replace('生爪をはがす', '～をはがす')
-            contents = contents.replace('南山の寿', '～の寿')
-            contents = contents.replace('難中の難事', '～の難事')
-            contents = contents.replace('苦味走った顔付', '～顔付')
-            contents = contents.replace('…を憎からず思う', '…を～思う')
-            contents = contents.replace('二軒建の家', '～の家')
-            contents = contents.replace('二三分の所である', '～の所である')
-            contents = contents.replace(': 両', '')
-            contents = contents.replace('似たり寄ったりだ', '～だ')
-            contents = contents.replace('にっと笑う', '～笑う')
-            contents = contents.replace('二本差しの武士', '～の武士')
-            contents = contents.replace('二枚開きの戸', '～の戸')
-            contents = contents.replace('入御あらせられる', '～あらせられる')
-            contents = contents.replace('忍の一字', '～の一字')
-            contents = contents.replace('根上がりの松', '～の松')
-            contents = contents.replace('猫糞を極める', '～を極める')
-            contents = contents.replace('寝酒を飲む', '～を飲む')
-            contents = contents.replace('寝待ちの月', '～の月')
-            contents = contents.replace('寝耳に水', '～に水')
-            contents = contents.replace('のっぺりした顔', '～した顔')
-            contents = contents.replace('背汗の至りです', '～の至りです')
-            contents = contents.replace('背水の陣/ジン/を布く', '～の陣/ジン/を布く')
-            contents = contents.replace('白玉楼中の人となる', '～の人となる')
-            contents = contents.replace(
-                ' (<i>напр. слоги</i> の <i>и</i> さ <i>в</i> ぼくのつくえ(樸の机) <i>будет</i> ぼノサくのつノサくえ)', '')
-            contents = contents.replace('果たせるかな', '～かな')
-            contents = contents.replace('八掛けで卸す', '～で卸す')
-            contents = contents.replace('八字の眉', '～の眉')
-            contents = contents.replace(
-                '(<i>букв.</i> 8½ ри, <i>слово-каламбур: жареный батат по вкусу похож на каштан (по-японски '
-                '— кури), а слово «кури» можно фонетически написать знаками</i> 九里, <i>что значит «девять ри»; но так '
-                'как батат всё же не каштан, то он «8½ ри»</i>)', '')
-            contents = contents.replace(
-                '(<i>первые четыре см.</i> <a href="#004-67-90">しく【四苦】</a>, <i>плюс муки разлуки любящих</i> '
-                '愛別離/アイベツリ/; <i>встречи с ненавистью</i> 怨憎会/オンゾウエ/, <i>неисполнения желаний</i> 求不得/クフトク/, '
-                '<i>расцвета духовных способностей</i> 五陰盛/ゴオンジョウ/)',
-                '(<i>первые четыре плюс муки разлуки любящих, встречи с ненавистью, неисполнения желаний, '
-                'расцвета духовных способностей</i>)')
-            contents = contents.replace('八色の姓/カバネ/', '～の姓/カバネ/')
-            contents = contents.replace(' (真人/マヒト/, 朝臣/アソミ/, 宿爾/スクネ/, 忌寸/イミキ/, 道師/ミチノシ/, 臣/オミ/, 連/ムラジ/, 稲置/イナギ/)', '')
-            contents = contents.replace('(<i>китайской медицины, см.</i> <a href="#004-13-59">よもぎ</a>, '
-                                        '<a href="#007-20-64">くまつづら</a>, <a href="#005-63-47">おうばこ</a>, <a href="#007-73-25">おなもみ</a>, '
-                                        '<a href="#003-02-17">しょうぶ【菖蒲】</a>, <a href="#000-62-80">すいかずら</a>, <a href="#000-08-32">はこべ</a>, '
-                                        '<a href="#008-74-72">はす【蓮】</a>, <i>однако при перечислении этих трав</i> はす <i>пишется</i> 荷葉)',
-                                        '(<i>китайской медицины</i>)')
-            contents = contents.replace('はったりを行う', '～を行う')
-            contents = contents.replace('はっと思う ', '～思う ')
-            contents = contents.replace('八方美人型の性格', '～の性格')
-            contents = contents.replace('…は初耳だ', '…は～だ')
-            contents = contents.replace('話し半分に聞く', '～に聞く')
-            contents = contents.replace('鼻持ちがならない', '～がならない')
-            contents = contents.replace('腹塞ぎに食べる', '～に食べる')
-            contents = contents.replace('; напр.</i> 弓二張/ユミフタハリ/ два лука', '')
-            contents = contents.replace('半堅気な女', '～な女')
-            contents = contents.replace('繁簡よろしきを得た', '～よろしきを得た')
-            contents = contents.replace('半眼で見る', '～で見る')
-            contents = contents.replace(' (パ, ピ, プ, ぺ, ポ)', '')
-            contents = contents.replace('半身に構える', '～に構える')
-            contents = contents.replace('売文の徒', '～の徒')
-            contents = contents.replace('抜山蓋世の勇がある', '～の勇がある')
-            contents = contents.replace('荊棘がきに引っかく', '～に引っかく')
-            contents = contents.replace('万止むを得なければ', '～止むを得なければ')
-            contents = contents.replace('万斛の涙を注ぐ', '～の涙を注ぐ')
-            contents = contents.replace('万仭の谷', '～の谷')
-            contents = contents.replace('晩節を全うする', '～を全うする')
-            contents = contents.replace('万籟絶/タ/ゆ', '～絶/タ/ゆ')
-            contents = contents.replace('万緑叢中の紅一点', '～中の紅一点')
-            contents = contents.replace('贔屓目に見る', '～に見る')
-            contents = contents.replace('非業の死(最期)を遂げる', '～の死(最期)を遂げる')
-            contents = contents.replace('非業消滅のため', '～のため')
-            contents = contents.replace('直押しに押し寄せる', '～に押し寄せる')
-            contents = contents.replace('ひた走りに走る', '～に走る')
-            contents = contents.replace('左団扇で暮らす', '～で暮らす')
-            contents = contents.replace('必死必中の武器', '～の武器')
-            contents = contents.replace('筆誅を加える', '～を加える')
-            contents = contents.replace('筆陣を張る', '～を張る')
-            contents = contents.replace('一泡吹かせてやる', '～吹かせてやる')
-            contents = contents.replace('一芝居を打つ', '～を打つ')
-            contents = contents.replace('人好きのいい', '～のいい')
-            contents = contents.replace('人好きのわるい', '～のわるい')
-            contents = contents.replace('一堪りもなく', '～もなく')
-            contents = contents.replace('人っ子ひとり見えない(いない)', '～ひとり見えない(いない)')
-            contents = contents.replace('一照り照ると', '～照ると')
-            contents = contents.replace('一肌脱/ヌ/ぐ', '～脱/ヌ/ぐ')
-            contents = contents.replace('ひと降りほしいですね', '～ほしいですね')
-            contents = contents.replace('独り言を言う', '～を言う')
-            contents = contents.replace('独り佳居で暮らす', '～で暮らす')
-            contents = contents.replace('霏々として降る', '～として降る')
-            contents = contents.replace('百聞一見に如/シ/かず', '百聞一見に如かず')
-            contents = contents.replace('百万台に達する', '～に達する')
-            contents = contents.replace('百味の飲食', '～の飲食')
-            contents = contents.replace('飆々と鳴る', '～と鳴る')
-            contents = contents.replace('表裏反覆常/ツネ/がない', '～常/ツネ/がない')
-            contents = contents.replace('ひんひん啼く', '～啼く')
-            contents = contents.replace('びくともしない', '～ともしない')
-            contents = contents.replace('廟堂に立つ', '～に立つ')
-            contents = contents.replace('屛風倒しに倒れる', '～に倒れる')
-            contents = contents.replace('ぴょこんと頭を下げる', '～頭を下げる')
-            contents = contents.replace('ぴょんと跳ぶ', '～跳ぶ')
-            contents = contents.replace('ぴょんぴょん跳ぶ', '～跳ぶ')
-            contents = contents.replace('ぴよぴよ鳴く', '～鳴く')
-            contents = contents.replace('風声鶴嗅に驚く', '～に驚く')
-            contents = contents.replace('風前の灯(灯火)', '～の灯(灯火)')
-            contents = contents.replace('深爪を切る', '～を切る')
-            contents = contents.replace('不帰の客となる', '～の客となる')
-            contents = contents.replace('不許複製', '～複製')
-            contents = contents.replace('俯仰天地に愧じず(恥ずる所がない)', '～天地に愧じず, ～天地に恥ずる所がない')
-            contents = contents.replace('不拘留のまま検束される', '～のまま検束される')
-            contents = contents.replace(', <i>напр.</i> 二千/フタセン/三百 две тысячи триста', '')
-            contents = contents.replace('二桁の数', '～の数')
-            contents = contents.replace('二手に別れる', '～に別れる')
-            contents = contents.replace('二目と見られない[ような]', '～と見られない[ような]')
-            contents = contents.replace('…に足を踏みかける', '…に足を～')
-            contents = contents.replace('不問に付する', '～に付する')
-            contents = contents.replace('…降りみ降らずみ雨が絶えず', '～雨が絶えず')
-            contents = contents.replace('踏ん切りがつかない', '～がつかない')
-            contents = contents.replace('不精髭を生やしている', '～を生やしている')
-            contents = contents.replace('物質不滅の法則', '～の法則')
-            contents = contents.replace('物質保存の原理', '～の原理')
-            contents = contents.replace('ぶつくさ言う', '～言う')
-            contents = contents.replace('炳として日月の如し', '～として日月の如し')
-            contents = contents.replace(
-                ' へへ <i>брови</i>, のの <i>глаза</i>, も <i>нос</i>, へ <i>рот</i>, じ <i>овал лица)</i>',
-                ')')
-            contents = contents.replace('へへののもへじの生徒', '～の生徒')
-            contents = contents.replace('へべれけに酔う', '～に酔う')
-            contents = contents.replace('一臂の力を貸す', '～の力を貸す')
-            contents = contents.replace('…は未だしという所がある', '…は～という所がある')
-            contents = contents.replace('魚心あれば水心/ミズゴコロ/', '～あれば水心/ミズゴコロ/')
-            contents = contents.replace('打出の小槌', '～の小槌')
-            contents = contents.replace('売言葉に買い言葉', '～に買い言葉')
-            contents = contents.replace('叡聞に達する', '～に達する')
-            contents = contents.replace('鸚鵡返しに言う', '～に言う')
-            contents = contents.replace('哀々禁ぜず', '～禁ぜず')
-            contents = contents.replace('意気衝天の概がある', '～の概がある')
-            contents = contents.replace('いたずら盛りの年頃', '～の年頃')
-            contents = contents.replace('一寸試し五分試めしにする', '～五分試めしにする')
-            contents = contents.replace('一桃腐りて百桃/ヒャクトウ/損ず', '一桃腐りて百桃損ず')
-            contents = contents.replace('お手数ながら', '～ながら')
-            contents = contents.replace('親風を吹かせる', '～を吹かせる')
-            contents = contents.replace('会稽の恥をそそぐ', '～の恥をそそぐ')
-            contents = contents.replace('海陸両棲の動物', '～の動物')
-            contents = contents.replace('隔日発作のおこり', '～のおこり')
-            contents = contents.replace('籠抜け[詐欺]を働く', '～[詐欺]を働く')
-            contents = contents.replace('家庭型の女', '～の女')
-            contents = contents.replace('下風に立つ', '～に立つ')
-            contents = contents.replace('べそをかく', '～をかく')
-            contents = contents.replace('捧刀の礼', '～の礼')
-            contents = contents.replace('ほんこでめんこをする', '～でめんこをする')
-            contents = contents.replace('本腹の子', '～の子')
-            contents = contents.replace('忙中の閑 ', '～の閑 ')
-            contents = contents.replace('; <i>ср.</i> にょうぼさつ', '')
-            contents = contents.replace('ぼたりと落ちた', '～と落ちた')
-            contents = contents.replace('ぼちゃんと飛び込む', '～と飛び込む')
-            contents = contents.replace('ぼってり太った', '～太った')
-            contents = contents.replace('凡慮の及ぶ所でない', '～の及ぶ所でない')
-            contents = contents.replace('前先が見えない', '～が見えない')
-            contents = contents.replace('目蔭をさす', '～をさす')
-            contents = contents.replace('紛う方なき', '～方/こと/なき')
-            contents = contents.replace('まじまじ[と]見る', '～[と]見る')
-            contents = contents.replace('末筆ながら', '～ながら')
-            contents = contents.replace('まんじりともしない', '～ともしない')
-            contents = contents.replace('見極めのつかぬ', '～のつかぬ')
-            contents = contents.replace('右枕に寝る', '～に寝る')
-            contents = contents.replace('身ぐるみはぎとられる', '～はぎとられる')
-            contents = contents.replace('三桁の数', '～の数')
-            contents = contents.replace('見だてがない', '～がない')
-            contents = contents.replace('三つ巴の争い(混戦)', '～の争い, ～の混戦')
-            contents = contents.replace('身分相応に暮らす(やって行く)', '～に暮らす, ～やって行く')
-            contents = contents.replace('無可有の郷/サト/', '～の郷/サト/')
-            contents = contents.replace('向かっ腹を立てる', '～を立てる')
-            contents = contents.replace('無原罪の御宿/オヤド/', '～の御宿/オヤド/')
-            contents = contents.replace('無駄飯を食う', '～を食う')
-            contents = contents.replace('胸三寸に納める', '～に納める')
-            contents = contents.replace('盲打ちに打つ', '～に打つ')
-            contents = contents.replace('盲撃ちに撃つ', '～に撃つ')
-            contents = contents.replace('盲判を押す', '～を押す')
-            contents = contents.replace('目覚め勝ちの一夜を過ごす', '～の一夜を過ごす')
-            contents = contents.replace('目潰しを食わせる, 目潰しに…を投げる', '～を食わせる, ～に…を投げる')
-            contents = contents.replace('目端がきく', '～がきく')
-            contents = contents.replace('めらめら燃え上がる', '～燃え上がる')
-            contents = contents.replace('もうと鳴く', '～と鳴く')
-            contents = contents.replace('…の話で持ち切りだった', '…の話で～だった')
-            contents = contents.replace('…に身を持ち崩す', '…に身を～')
-            contents = contents.replace('勿怪の幸', '～の幸')
-            contents = contents.replace('本立ちのよい', '～のよい')
-            contents = contents.replace('諸肌を脱ぐ(脱いでいる)', '～を脱ぐ(脱いでいる)')
-            contents = contents.replace('門前雀羅を張る', '～を張る')
-            contents = contents.replace('薬石効/コウ/なく', '～効/コウ/なく')
-            contents = contents.replace('役人風を吹かす', '～を吹かす')
-            contents = contents.replace('自暴酒をあふる', '～をあふる')
-            contents = contents.replace('八又の大蛇/オロチ/', '～の大蛇/オロチ/')
-            contents = contents.replace('湯気にあたる', '～にあたる')
-            contents = contents.replace('夢聊 <i>с отриц.</i>', '<i>с отриц.</i>')
-            contents = contents.replace('夢聊も忘れない', '～も忘れない')
-            contents = contents.replace('夢枕に立つ', '～に立つ')
-            contents = contents.replace('俑を作る', '～を作る')
-            contents = contents.replace('様です(だ)', '～です(だ)')
-            contents = contents.replace('よう[御座います]', '～[御座います]')
-            contents = contents.replace('よくせきの事で', '～の事で')
-            contents = contents.replace('横車を押す', '～を押す')
-            contents = contents.replace('横抱きにかかえる', '～にかかえる')
-            contents = contents.replace('横手を打つ', '～を打つ')
-            contents = contents.replace('横飛びに飛んでゆく', '～に飛んでゆく')
-            contents = contents.replace('横隣りの人', '～人')
-            contents = contents.replace('横薙ぎに払う', '～に払う')
-            contents = contents.replace('…由です', '…～です')
-            contents = contents.replace('由ある ', '～ある ')
-            contents = contents.replace('由ある人', '～ある人')
-            contents = contents.replace('余憤を漏らす', '～を漏らす')
-            contents = contents.replace('寄辺なぎさの捨小舟/ステコブネ/', '～の捨小舟/ステコブネ/')
-            contents = contents.replace('埒外に出る', '～に出る')
-            contents = contents.replace(
-                '<i>(в древнем Китае:</i> 礼 <i>нормы общественного поведения</i>, 楽 <i>музыка</i>, 射 <i>стрельба из лука</i>, 御/ギョ/ <i>управление колесницей</i>, 書 <i>письмо</i>, 数 <i>счёт)</i>',
-                '<i>(в древнем Китае: нормы общественного поведения, музыка, стрельба из лука, управление колесницей, письмо, счёт)')
-            contents = contents.replace('陸路[を通って]', '～[を通って]')
-            contents = contents.replace('立錐の余地もない', '～の余地もない')
-            contents = contents.replace('両袖付の机', '～の机')
-            contents = contents.replace('りーんと呼鈴を鳴らす', '～と呼鈴を鳴らす')
-            contents = contents.replace('老残の身', '～の身')
-            contents = contents.replace('論陣を張る', '～を張る')
-            contents = contents.replace('論歩を進める', '～を進める')
-            contents = contents.replace(' (<i>ср.</i> あんか【案下】, <a href="#001-61-23">おんちゅう【御中】</a>)', '')
-            contents = contents.replace('和局を結ぶ', '～を結ぶ')
-            contents = contents.replace('わなわな震える', '～震える')
-            contents = contents.replace('インキ止の紙', '～の紙')
-            contents = contents.replace('カメラ顔のいい', '～のいい')
-            contents = contents.replace('(<i>букв.</i> с отметкой «ки», <i>сокр.</i> китигаи 気違い)',
-                                        '(<i>букв.</i> с отметкой «ки», <i>сокр.</i> 気違い)')
-            contents = contents.replace('ジェスチャーまじりの話しぶり', '～の話しぶり')
-            contents = contents.replace('(ストリキニン <i>англ.</i> strychnin, ストリキニーネ <i>голл.</i> strychnine)',
-                                        '(<i>от англ.</i> strychnin, <i>голл.</i> strychnine)')
-            contents = contents.replace('タイム・アップだ', '～だ')
-            contents = contents.replace('てくしーで行く', '～で行く')
-            contents = contents.replace('ヌーボー式の人', '～の人')
-            contents = contents.replace('バベルの塔', '～の塔')
-            contents = contents.replace('ビキニの灰/ハイ/', '～の灰/ハイ/')
-            contents = contents.replace('フォールに持ち込む', '～に持ち込む')
-            contents = contents.replace('ホーム・ルーム指導教師', '～指導教師')
-            contents = contents.replace('(<i>кит.</i> мэй фацзы 没法子)', '(<i>кит.</i> 没法子 [мэй фацзы])')
-            contents = contents.replace(
-                ' (<i>слово-каламбур, основанное на графическом разложении иероглифа</i> 只 тада)', '')
-            contents = contents.replace(
-                ' (<i>прост. слово-каламбур — прочтённый по частям иероглиф</i> 頗, <i>см.</i> <a href="#002-34-54">すこぶる</a>)',
-                '')
-            contents = contents.replace('があがあ鳴く', '～鳴く')
-            contents = contents.replace('がぶがぶ飲む', '～飲む')
-            contents = contents.replace('がらんがらんと鳴る', '～と鳴る')
-            contents = contents.replace('菊水の紋', '～の紋')
-            contents = contents.replace(
-                ' <i>(поскольку иероглифы</i> 七十七 <i>в скорописном написании похожи на иероглиф</i> 喜, <i>написанный тоже скорописью)</i>',
-                '')
-            contents = contents.replace('鬼籍に入/ハイ/る', '～に入/ハイ/る')
-            contents = contents.replace('きゃんきゃん鳴く', '～鳴く')
-            contents = contents.replace('旧遊の地', '～の地')
-            contents = contents.replace('狭斜の巷', '～の巷')
-            contents = contents.replace('響板のエゾ', '～のエゾ')
-            contents = contents.replace('器量好みの人', '～の人')
-            contents = contents.replace('錦上更に花を添える', '～更に花を添える')
-            contents = contents.replace('義師を起す', '～を起す')
-            contents = contents.replace('ぎょっだね', '～だね')
-            contents = contents.replace('苦汁をなめる', '～をなめる')
-            contents = contents.replace('汲み立ての水', '～の水')
-            contents = contents.replace('ぐうの音 ', '～の音/ね/ ')
-            contents = contents.replace('化粧くずれを直す', '～を直す')
-            contents = contents.replace('欠を補う', '～を補う')
-            contents = contents.replace('拳匪の乱', '～の乱')
-            contents = contents.replace('げらげら笑う', '～笑う')
-            contents = contents.replace('口角泡/アワ/を飛ばして', '～泡/アワ/を飛ばして')
-            contents = contents.replace('哄然と笑う', '～と笑う')
-            contents = contents.replace('巧遅は拙速に如/シ/かず', '巧遅は拙速に如かず')
-            contents = contents.replace('口辺に微笑をたたえて', '～に微笑をたたえて')
-            contents = contents.replace('小首をかしげる(傾ける, ひねる)', '～をかしげる, ～を傾ける, ～をひねる')
-            contents = contents.replace('心待ちに待つ', '～に待つ')
-            contents = contents.replace('滑稽交じりに話す', '～に話す')
-            contents = contents.replace('<i>форма</i> なさい <i>в женской речи, см.</i> <a href="#006-93-67">なさい</a>',
-                                        '<i>в женской речи</i> <i>см.</i> <a href="#006-93-67">なさい</a>')
-            contents = contents.replace('両極端は相会す', '＝両極端は～す')
-            contents = contents.replace('顔を赤らめる', '＝顔を～')
-            contents = contents.replace('夜の明け抜けに', '＝夜の～に')
-            contents = contents.replace('どうぞ悪しからず[思って下さい]', '＝どうぞ～[思って下さい]')
-            contents = contents.replace('二人は熱々だ', '＝二人は～だ')
-            contents = contents.replace('疑心暗鬼を生ず', '＝疑心～を生ず')
-            contents = contents.replace('故人遺愛の', '＝故人～の')
-            contents = contents.replace('夫婦は異身同体である', '＝夫婦は～である')
-            contents = contents.replace('[打って]一丸とする', '＝[打って]～とする')
-            contents = contents.replace('赤ん坊にいないいないばーをやって見る', '＝赤ん坊に～をやって見る')
-            contents = contents.replace(' 得意の鼻をうごめかす', ' ＝得意の鼻を～')
-            contents = contents.replace('一点の打処もない', '＝一点の～もない')
-            contents = contents.replace('顔を俯向ける', '＝顔を～')
-            contents = contents.replace('時を得顔に振舞う', '＝時を～に振舞う')
-            contents = contents.replace('そんなことがあるかしら！あるとも、あるとも大ありだ', '＝そんなことがあるかしら！あるとも、あるとも～')
-            contents = contents.replace('子供のお仕置き', '＝子供の～')
-            contents = contents.replace('これでおつもりだよ', '＝これで～だよ')
-            contents = contents.replace('人口に膾炙する', '＝人口に～する')
-            contents = contents.replace('意に介する', '＝意に～')
-            contents = contents.replace('涙に掻き暮れる', '＝涙に～')
-            contents = contents.replace('御加餐を祈る', '＝御～を祈る')
-            contents = contents.replace('鼻をかむ', '＝鼻を～')
-            contents = contents.replace('声を嗄らす', '＝声を～')
-            contents = contents.replace('世は刈菰と乱れた', '＝世は～と乱れた')
-            contents = contents.replace('声が嗄れる ', '＝声が～ ')
-            contents = contents.replace('犬の川端歩き', '＝犬の～')
-            contents = contents.replace('酒の燗をする(付ける)', '＝酒の～をする(付ける)')
-            contents = contents.replace('事務を簡捷にする', '＝事務を～にする')
-            contents = contents.replace('生死の関頭に立つ', '＝生死の～に立つ')
-            contents = contents.replace('もう堪忍袋の緒が切れた', '＝もう～の緒/お/が切れた')
-            contents = contents.replace('それが聞き納めだった', '＝それが～だった')
-            contents = contents.replace('妙な気先が動いて', '＝妙な～が動いて')
-            contents = contents.replace('私は着た切り雀だ', '＝私は～だ')
-            contents = contents.replace('万事休す', '＝万事～')
-            contents = contents.replace('半/ナカバ/香落ちで指す', '＝半/ナカバ/～で指す')
-            contents = contents.replace('毛の癖直しをする', '＝毛の～をする')
-            contents = contents.replace('彼は糞落着きに落着いている', '＝彼は～に落着いている')
-            contents = contents.replace('日が暮れなずむ', '＝日が～')
-            contents = contents.replace('鹿児島くんだりへ行く', '＝鹿児島～へ行く')
-            contents = contents.replace('獅子の子落とし', '＝獅子の～')
-            contents = contents.replace('風邪を拗らす', '＝風邪を～')
-            contents = contents.replace('家/イエ/の子郎党', '＝家/イエ/の～')
-            contents = contents.replace('小刀を逆手に持つ(取る)', '＝小刀を～に持つ(取る)')
-            contents = contents.replace('言うも更なり', '＝言うも～')
-            contents = contents.replace('日/ヒ/既に三竿', '＝日/ヒ/既に～')
-            contents = contents.replace('舌にざらつく', '＝舌に～')
-            contents = contents.replace('顔を顰める', '＝顔を～')
-            contents = contents.replace('身に泌み感じる', '＝身に～')
-            contents = contents.replace('夜は深々と更けて行く', '＝夜は～と更けて行く')
-            contents = contents.replace('その言は今もなお耳底にある', '＝その言は今もなお～にある')
-            contents = contents.replace('うんともすんとも言わない не сказать', '＝うんとも～とも言わない не сказать')
-            contents = contents.replace('うんともすんとも言わない не ответить', '～ともすんとも言わない не ответить')
-            contents = contents.replace('面/ツラ/の皮が千枚張りだ', '＝面/ツラ/の皮が～だ')
-            contents = contents.replace('模様を染め出す', '＝模様を～')
-            contents = contents.replace('風がそよそよ吹く', '＝風が～吹く')
-            contents = contents.replace('小便をたれる', '＝小便を～')
-            contents = contents.replace('そのたんびに', '＝その～に')
-            contents = contents.replace('不信任の弾劾案', '＝不信任の～')
-            contents = contents.replace('お使い立てをしまして申訳ありません', '＝お～をしまして申訳ありません')
-            contents = contents.replace('口を噤む', '＝口を～')
-            contents = contents.replace('五日付け[の]', '＝五日～[の]')
-            contents = contents.replace('権威づけの為に', '＝権威～の為に')
-            contents = contents.replace('目をつぶる', '＝目を～')
-            contents = contents.replace('酒を手酌で飲む', '＝酒を～で飲む')
-            contents = contents.replace('『済みません』てな事を言う', '＝『済みません』～事を言う')
-            contents = contents.replace('両刀を手挟む', '＝両刀を～')
-            contents = contents.replace('写真を摂る', '＝写真を～')
-            contents = contents.replace('最後の一周は彼の独走の観があった', '＝最後の一周は彼の～の観があった')
-            contents = contents.replace('二十円ドタを割る', '＝二十円～を割る')
-            contents = contents.replace('目を泣き潰す', '＝目を～')
-            contents = contents.replace('事も無げ', '＝事も～')
-            contents = contents.replace('思案の投げ首', '＝思案の～')
-            contents = contents.replace('髪をなで付けにする', '＝髪を～にする')
-            contents = contents.replace('怒ったのなんのって', '＝怒ったの～')
-            contents = contents.replace('犬の逃げ吠え', '＝犬の～')
-            contents = contents.replace('たけのこのようににょきにょき出ている', '＝たけのこのように～出ている')
-            contents = contents.replace('烏の濡羽色', '＝烏の～')
-            contents = contents.replace('一人乗りの', '＝一人～の')
-            contents = contents.replace('鯛の浜焼', '＝鯛の～')
-            contents = contents.replace('涙をふるって馬謖を斬る', '＝涙をふるって～を斬る')
-            contents = contents.replace('眼をぱちくりさせる', '＝眼/め/を～させる')
-            contents = contents.replace('夜の引き明けに', '＝夜の～に')
-            contents = contents.replace('贔屓の引き倒し', '＝贔屓の～')
-            contents = contents.replace('お膝繰りを願います', '＝お～を願います')
-            contents = contents.replace('ざっと(急いで)一風呂浴びる', '＝急いで(ざっと)～浴びる')
-            contents = contents.replace('屁を放る', '＝屁を～')
-            contents = contents.replace('水の中をびちゃびちゃ歩く', '＝水の中を～歩く')
-            contents = contents.replace('風がびゅうびゅう吹く', '＝風が～吹く')
-            contents = contents.replace('タバコを吹かす курить', '＝タバコを～ курить')
-            contents = contents.replace('夜/ヨル/を更かす', '＝夜を～')
-            contents = contents.replace('風の吹き回し', '＝風の～')
-            contents = contents.replace('裏面に伏在する', '＝裏面に～する')
-            contents = contents.replace('足を踏み入れる', '＝足を～')
-            contents = contents.replace('[足の]踏み所もない', '＝[足の]～もない')
-            contents = contents.replace('[足を]踏み外ずす', '＝[足を]～')
-            contents = contents.replace('気がふれる', '＝気が～')
-            contents = contents.replace('…の便をはかって', '…の～をはかって')
-            contents = contents.replace('用が便じる', '＝用が～')
-            contents = contents.replace('どうぞ御放念下さいますよう', '＝どうぞ御～下さいますよう')
-            contents = contents.replace('御母堂', '＝御～')
-            contents = contents.replace('帽子を目深に被る', '＝帽子を～に被る')
-            contents = contents.replace('鰯の味醂干し', '＝鰯の～')
-            contents = contents.replace('人にめいめい向き向きある', '＝人にめいめい～ある')
-            contents = contents.replace('あの店は儲け主義だ', '＝あの店は～だ')
-            contents = contents.replace('煙がもくもく[と]出る', '＝煙が～[と]出る')
-            contents = contents.replace(' 気の持ちよう', ' ＝気の～')
-            contents = contents.replace('袴の股立ちを高くとる', '＝袴の～を高くとる')
-            contents = contents.replace('八幡の藪知らず', '＝八幡/やわた/の～')
-            contents = contents.replace('髪の結い方', '＝髪の～')
-            contents = contents.replace('あの男は何事も行き当たりばったり主義だ', '＝あの男は何事も～だ')
-            contents = contents.replace('この本は読み出がない', '＝この本は～がない')
-            contents = contents.replace('人間は万物の霊長', '＝人間は万物～')
-            contents = contents.replace('彼は笑い上戸だ', '＝彼は～だ')
-            contents = contents.replace('彼は悪口屋だ', '＝彼は～だ')
-            contents = contents.replace('彼は悪擦れしている', '＝彼は～している')
-            contents = contents.replace('(<i>отриц. форма гл.</i> <a href="#006-14-76">しく【如く】</a>) ', '')
-            contents = contents.replace('大所高所から物を見る', '～から物を見る')
-            contents = contents.replace('<i>связ. кн. отриц. форма гл.</i>', '<i>кн. отриц. форма гл.</i>')
-            contents = contents.replace('(<i>с 1949 г., ср.</i> <a href="#007-97-88">ていだい【帝大】</a>)',
-                                        '(<i>с 1949 г.</i>)')
-            contents = contents.replace('夜が明け離れた', '＝夜が｜た～')
-            contents = contents.replace('捏ね交ぜて一つにした', '｜て～一つにした')
-            contents = contents.replace('身を挺して', '＝身を｜して～')
-            contents = contents.replace('取って付けた様な', '｜た～様な')
-            contents = contents.replace('…は両眼を泣き腫らしていた', '…は両眼を｜して～いた')
-            contents = contents.replace('…は記憶から拭い去られた', '…は記憶から｜られた～')
-            contents = contents.replace('羽/ハネ/の生え揃った', '＝羽/ハネ/の｜った～')
-            contents = contents.replace('罷り間違えば, 罷り間違っても', '｜えば～, ｜って～も')
-            contents = contents.replace('目に物見せてやる', '＝目に｜て～やる')
-            contents = contents.replace('<i>от</i> <a href="#001-55-99">ベースI 1</a> <i>и англ.</i> up',
-                                        '<i>от</i> ベース <i>и англ.</i> up')
-            contents = contents.replace('(<i>от</i> ごねる <i>и</i> 得 току)', '(<i>от</i> ごねる <i>и</i> 得)')
-            contents = contents.replace('(<i>от сокр.</i> мосурин モスリン)', '(<i>от сокр.</i> モスリン)')
-            contents = contents.replace('<i>связ.:</i> お待ち遠様/オマチドウサマ/[でした]',
-                                        '<i>связ.:</i> omachidousama 【お待ち遠様】 [deshita]')
-            contents = contents.replace(
-                '<i>побуд. залог гл.</i> つく【尽く】, <i>т. е. письменной формы гл.</i> <a href="#008-04-11">つきる</a>;',
-                '<i>побуд. залог гл.</i> <a href="#003-19-230">つく</a>')
-            contents = contents.replace('(<i>редко</i> 供わる) (<i>о себе тк.</i> 具わる)\n: …が～',
-                                        '(<i>о себе тк.</i> 具わる) (<i>редко</i> 供わる) …が～')
-            contents = contents.replace('…を記録に残す, …の記録をとる <i>см. выше</i> ～する;', 'を記録に残す, の記録をとる <i>см. выше</i> する')
-            contents = contents.replace('(<i>в конце предл. после</i> かも)', '…かも～ <i>в конце предл.</i>')
-            contents = contents.replace('(<i>как 2-й компонент сложн. сл.</i> ざいく) [мелкие] изделия, поделки;', 'ざいく')
-            contents = contents.replace(' (<i>напр.</i> кударидзака <i>вм.</i> кударисака)', '')
-            contents = contents.replace(
-                '2) как и следовало ожидать (<i>неправ. вм.</i> <a href="#000-83-01">かぜん【果然】</a>).',
-                '2) <i>неправ.</i> как и следовало ожидать.')
-            contents = contents.replace('(<i>вм.</i> 言わざる) ', '')
-            contents = contents.replace('(<i>вм.</i> 聞かざる) ', '')
-            contents = contents.replace('(<i>вм.</i> 見ざる) ', '')
-            contents = contents.replace('～の <i>см.</i> <a href="#003-79-98">かいせんじょう(～の)</a>.',
-                                        '～の <i>см.</i> <a href="#003-79-98">かいせんじょう(～[の])</a>.')
-            contents = contents.replace('～にする <i>см.</i> <a href="#003-80-49">こ【粉】(～にする)</a>.',
-                                        '～にする <i>см.</i> <a href="#003-80-49">こ【粉】(～にする)</a>.')
-            contents = contents.replace('粉にする(ひく) растирать в порошок; перемалывать на муку; толочь, молоть;',
-                                        '～にする, ～にひく растирать в порошок; перемалывать на муку; толочь, молоть;')
-            contents = contents.replace('<i>см.</i> <a href="#008-81-40">しりごみ (～する)</a>.',
-                                        '<i>см.</i> <a href="#008-81-40">しりごみ (～[を]する)</a>.')
-            contents = contents.replace('～[の] <i>см.</i> <a href="#003-36-07">じもと (～の)</a>.',
-                                        '～[の] <i>см.</i> <a href="#003-36-07">じもと (～[の])</a>.')
-            contents = contents.replace('ぶっ違いに置く', '～に置く')
-            contents = contents.replace('頰を火照らす <i>см.</i> <a href="#002-55-30">ほてる(頰が火照る)</a>;',
-                                        '＝頰を～ <i>см.</i> <a href="#002-55-30">ほてる(＝頰が～)</a>;')
-            contents = contents.replace('頰がほてる щёки пылают, лицо залила краска;',
-                                        '＝頰が～ щёки пылают, лицо залила краска;')
-            contents = contents.replace('<i>прост. что-л. рассчитанное на дешёвый эффект</i>;',
-                                        '<i>прост.</i> что-л. рассчитанное на дешёвый эффект;')
-            contents = contents.replace('<i>кн. заставлять быть таким:</i>',
-                                        '<i>кн.</i> заставлять быть таким:')
-            contents = contents.replace('<i>ономат. звук кипящего масла (при жаренье)</i>;',
-                                        '<i>ономат.</i> звук кипящего масла (при жаренье);')
-            contents = contents.replace('<i>ономат. отрывистый звук хлопушки и т. п.</i>;',
-                                        '<i>ономат.</i> отрывистый звук <i>хлопушки и т. п.</i>;')
-            contents = contents.replace('旅慣れた', '｜た～')
-            contents = contents.replace('旅慣れない', '｜ない～')
-            contents = contents.replace('1) <i>ономат. о выстреле, стуке или ударе обо что-л.</i>;',
-                                        '1) <i>ономат.</i> о выстреле, стуке или ударе <i>обо что-л.</i>;')
-            contents = contents.replace('<i>после сущ. подчёркивающая частица:</i>',
-                                        '<i>после сущ.</i> подчёркивающая частица:')
-            contents = contents.replace('待ち切れない', '｜れない～')
-            contents = contents.replace('足掻きがとれない', '～がとれない')
-            contents = contents.replace('胡座をかく', '～をかく')
-            contents = contents.replace('呆気に取られる', '～に取られる')
-            contents = contents.replace('口をあんぐりあいて', '＝口を～あいて')
-            contents = contents.replace('生き馬の目を抜く[ような事をする]', '～の目を抜く[ような事をする]')
-            contents = contents.replace('一縷の煙', '～の煙')
-            contents = contents.replace('一縷の命', '～の命')
-            contents = contents.replace('一縷の望みを抱く', '～の望みを抱く')
-            contents = contents.replace('一掬の水', '～の水')
-            contents = contents.replace('一掬の涙なきを得ない', '～のなきを得ない')
-            contents = contents.replace('一挙手一投足の労/ロウ/', '～の労/ロウ/')
-            contents = contents.replace('一挙手一投足に過ぎない', '～に過ぎない')
-            contents = contents.replace('一再ならず', '～ならず')
-            contents = contents.replace('いっそ[のこと]', '～[のこと]')
-            contents = contents.replace('命冥加が尽きた', '～が尽きた')
-            contents = contents.replace('命冥加な奴だ', '～な奴だ')
-            contents = contents.replace('うんうん言っている', '～言っている')
-            contents = contents.replace('江戸前の魚', '～の魚')
-            contents = contents.replace('江戸前の料理', '～の料理')
-            contents = contents.replace('王手飛車を食う', '～を食う')
-            contents = contents.replace('王手飛車に掛ける', '～に掛ける')
-            contents = contents.replace('臆面もない', '～もない')
-            contents = contents.replace('烏滸の沙汰/サタ/', '～の沙汰/サタ/')
-            contents = contents.replace('心を落ち着けて', '＝心を｜て～')
-            contents = contents.replace('お目にかかる', '～にかかる')
-            contents = contents.replace('お目にかける', '～にかける')
-            contents = contents.replace('…のお目に止まる', '…の～に止まる')
-            contents = contents.replace('思い半ばに過ぎぬ', '～に過ぎぬ')
-            contents = contents.replace('思う壷に嵌る', '～に嵌る')
-            contents = contents.replace('開巻第一に', '～第一に')
-            contents = contents.replace('回天の偉業(事業)', '～の偉業(事業)')
-            contents = contents.replace('回天の力', '～の力')
-            contents = contents.replace('固唾を飲む', '～を飲む')
-            contents = contents.replace('かちんと鳴る', '～と鳴る')
-            contents = contents.replace('かちんかちん', '～かちん')
-            contents = contents.replace('紙一重である', '～である')
-            contents = contents.replace('からっと晴れ上がる', '～晴れ上がる')
-            contents = contents.replace('からっと揚げる', '～揚げる')
-            contents = contents.replace('かんかん鳴る', '～鳴る')
-            contents = contents.replace('かんかん日が照っている', '～日が照っている')
-            contents = contents.replace('かんかんに怒る', '～に怒る')
-            contents = contents.replace('三学年生', '＝三～')
-            contents = contents.replace('がちゃがちゃいう音', '～いう音')
-            contents = contents.replace('がちゃがちゃさせる(音を立てる)', '～させる, ～音を立てる')
-            contents = contents.replace('がぶりと飲み込む', '～と飲み込む')
-            contents = contents.replace('がぶりと嚙み付く', '～と嚙み付く')
-            contents = contents.replace('がやがや騒ぐ', '～騒ぐ')
-            contents = contents.replace('がらがらいう音', '～いう音')
-            contents = contents.replace('がらがらと音がする', '～と音がする')
-            contents = contents.replace('がりがり音を立てる', '～音を立てる')
-            contents = contents.replace('がりがり嚙む', '～嚙む')
-            contents = contents.replace('がんがん鳴る(鳴らす)', '～鳴る, ～鳴らす')
-            contents = contents.replace('喜の字', '～の字')
-            contents = contents.replace('喜の祝', '～の祝')
-            contents = contents.replace('機影を現わす', '～を現わす')
-            contents = contents.replace('機影を没する', '～を没する')
-            contents = contents.replace('気位が高い', '～が高い')
-            contents = contents.replace('気随気儘な', '～気儘な')
-            contents = contents.replace('きちきちに詰まっている', '～に詰まっている')
-            contents = contents.replace('時間きちきちに', '＝時間～に')
-            contents = contents.replace('気骨が折れる', '～が折れる')
-            contents = contents.replace('気骨の折れる', '～の折れる')
-            contents = contents.replace('きーきーいう音', '～いう音')
-            contents = contents.replace('きーきー鳴く', '～鳴く')
-            contents = contents.replace('ぎゃふんと言わせる', '～言わせる')
-            contents = contents.replace('ぎゃふんと言う(参る)', '～言う, ～参る')
-            contents = contents.replace('ぎゅうぎゅう鳴る', '～鳴る')
-            contents = contents.replace('ぎゅうぎゅう鳴る音', '～鳴る音')
-            contents = contents.replace('ぎゅーと言う音', '～と言う音')
-            contents = contents.replace('ぎゅーと開く', '～と開く')
-            contents = contents.replace('ぎょろぎょろ見る', '～見る')
-            contents = contents.replace('くすくす笑う', '～笑う')
-            contents = contents.replace('くたくた疲れる', '～疲れる')
-            contents = contents.replace('汗でカラーがくたくたになった', '＝汗でカラーが～になった')
-            contents = contents.replace('くたくた煮る', '～煮る')
-            contents = contents.replace('口占で見る', '～で見る')
-            contents = contents.replace('口幅ったい事を言う', '～事を言う')
-            contents = contents.replace('くつくつ笑う', '～笑う')
-            contents = contents.replace('目がくらくらする', '＝目が～する')
-            contents = contents.replace('くらくら煮え立つ', '～煮え立つ')
-            contents = contents.replace('暮れ残る空の色', '～空の色')
-            contents = contents.replace('暮れ残る白百合/シラユリ/', '～白百合/シラユリ/')
-            contents = contents.replace('くんくんと泣く', '～と泣く')
-            contents = contents.replace('くんくん嗅ぐ', '～嗅ぐ')
-            contents = contents.replace('ぐいっと飲む', '～飲む')
-            contents = contents.replace('ぐいと引く', '～引く')
-            contents = contents.replace('ぐうぐう寝る', '～寝る')
-            contents = contents.replace('腹がぐうぐう鳴る', '＝腹が～鳴る')
-            contents = contents.replace('ぐうの音も出ない', '～も出ない')
-            contents = contents.replace('ぐるぐる回る', '～回る')
-            contents = contents.replace('ぐるぐる巻く(巻きにする)', '～巻く, ～巻きにする')
-            contents = contents.replace('けりが付く', '～が付く')
-            contents = contents.replace('鳧を付ける', '～を付ける')
-            contents = contents.replace('乾坤一擲の勝負をやる', '～の勝負をやる')
-            contents = contents.replace('玄関払いを食わす', '～を食わす')
-            contents = contents.replace('玄関払いを食わさせる', '～を食わさせる')
-            contents = contents.replace('好学の念', '～の念')
-            contents = contents.replace('好学の士', '～の士')
-            contents = contents.replace('浩然の気', '～の気')
-            contents = contents.replace('浩然の気を養う', '～の気を養う')
-            contents = contents.replace('孤高の生活', '～の生活')
-            contents = contents.replace('孤高を持/ジ/す', '～を持/ジ/す')
-            contents = contents.replace('…するを快しとする', '…するを～とする')
-            contents = contents.replace('…するを快しとしない', '…するを～としない')
-            contents = contents.replace('ころころ転げる', '～転げる')
-            contents = contents.replace('あの人はころころとふとっている', '＝あの人は～とふとっている')
-            contents = contents.replace('ころころと鳴く', '～と鳴く')
-            contents = contents.replace('狐がこんこんと鳴く', '＝狐が～と鳴く')
-            contents = contents.replace('こんこんと咳をする', '～と咳をする')
-            contents = contents.replace('こんこんと打つ', '～と打つ')
-            contents = contents.replace('雪がこんこんと降る', '＝雪が～と降る')
-            contents = contents.replace('滾々と流れる', '～と流れる')
-            contents = contents.replace('滾々として尽きない', '～として尽きない')
-            contents = contents.replace('ごうと通る', '～と通る')
-            contents = contents.replace('ごうという彼の音', '～という彼の音')
-            contents = contents.replace('轟々という音', '～という音')
-            contents = contents.replace('轟々と鳴る', '～と鳴る')
-            contents = contents.replace('呉下の阿蒙/アモウ/である', '～の阿蒙/アモウ/である')
-            contents = contents.replace('ごぼごぼいう音', '～いう音')
-            contents = contents.replace('ごぼごぼ音がする', '～音がする')
-            contents = contents.replace('目を覚ます', '＝目を～')
-            contents = contents.replace('酔いを醒ます', '＝酔いを～')
-            contents = contents.replace('迷い(迷夢)を醒ます', '＝迷い(迷夢)を～')
-            contents = contents.replace('[目が]覚める', '＝[目が]～')
-            contents = contents.replace('目のさめるような美人', '＝目の～ような美人')
-            contents = contents.replace('酔いが醒める', '＝酔いが～')
-            contents = contents.replace('ざくざく音がする', '～音がする')
-            contents = contents.replace('砂をざくざく踏む', '＝砂を～踏む')
-            contents = contents.replace('ざーざー降りの雨', '～降りの雨')
-            contents = contents.replace('ざーざー流れる', '～流れる')
-            contents = contents.replace('四季折々の花', '～の花')
-            contents = contents.replace('四季折々の眺めがある', '～の眺めがある')
-            contents = contents.replace('しくしく泣く', '～泣く')
-            contents = contents.replace('腹がしくしく痛む', '＝腹が～痛む')
-            contents = contents.replace('死出の旅', '～の旅')
-            contents = contents.replace('死出の山', '～の山')
-            contents = contents.replace('芝居道の人々', '～の人々')
-            contents = contents.replace('芝居道に入/ハイ/る', '～に入/ハイ/る')
-            contents = contents.replace('…を斜に構える', '…を～に構える')
-            contents = contents.replace('体を斜に構える', '＝体を～に構える')
-            contents = contents.replace('衆口一致して', '～一致して')
-            contents = contents.replace('手裏に掌握する', '～に掌握する')
-            contents = contents.replace('手裏を脱する', '～を脱する')
-            contents = contents.replace('しゅーと言う音', '～と言う音')
-            contents = contents.replace('しゅーしゅーいう', '～いう')
-            contents = contents.replace('性懲りもなく', '～もなく')
-            contents = contents.replace('神も照覧あれ', '＝神も～あれ')
-            contents = contents.replace('雨がしょぼしょぼ降る', '＝雨が～降る')
-            contents = contents.replace('しょぼしょぼに濡れる', '～に濡れる')
-            contents = contents.replace('しょぼしょぼした目', '～した目')
-            contents = contents.replace('目をしょぼしょぼさせる', '＝目を～させる')
-            contents = contents.replace('しょぼしょぼした髯', '～した髯')
-            contents = contents.replace('十目の見る所', '～の見る所')
-            contents = contents.replace('上聞に入れる', '～に入れる')
-            contents = contents.replace('上聞に達する', '～に達する')
-            contents = contents.replace('すかを食わす', '～を食わす')
-            contents = contents.replace('すかを食う', '～を食う')
-            contents = contents.replace('足を滑らす', '＝足を～')
-            contents = contents.replace('口をすべらした', '＝口を｜した～')
-            contents = contents.replace('専門外の人', '～の人')
-            contents = contents.replace('それは専門外だ', '＝それは～だ')
-            contents = contents.replace('千慮の一失', '～の一失')
-            contents = contents.replace('ぜいぜい言う', '～言う')
-            contents = contents.replace('蘇張の弁/ベン/', '～の弁/ベン/')
-            contents = contents.replace('蘇張の弁を振う', '～の弁を振う')
-            contents = contents.replace('蒼茫たる大海', '～たる大海')
-            contents = contents.replace('蒼茫と暮れて行く', '～と暮れて行く')
-            contents = contents.replace('俎上の魚', '～の魚')
-            contents = contents.replace('俎上に載せる', '～に載せる')
-            contents = contents.replace('俎上に置く(載せる)', '～に置く, ～に載せる')
-            contents = contents.replace('耳を欹てる', '＝耳を～')
-            contents = contents.replace('目を欹てる', '＝目を～')
-            contents = contents.replace('側杖を食う', '～を食う')
-            contents = contents.replace('側杖を食って殺される', '～を食って殺される')
-            contents = contents.replace('あぶないぞ！', '＝あぶない～！')
-            contents = contents.replace('誰ぞ来たのか？', '＝誰～来たのか？')
-            contents = contents.replace('ぞっきに出す', '～に出す')
-            contents = contents.replace('ぞっきで売る', '～で売る')
-            contents = contents.replace('大過なきに近い', '～に近い')
-            contents = contents.replace('大過無きを得/エ/る', '～を得/エ/る')
-            contents = contents.replace('高砂のじいさんとばあさん', '～じいさんとばあさん')
-            contents = contents.replace('高砂の松', '～の松')
-            contents = contents.replace('高枕で寝る', '～で寝る')
-            contents = contents.replace('世間知らずの高枕', '＝世間知らずの～')
-            contents = contents.replace('お互っこだ', '＝お～だ')
-            contents = contents.replace('他見を憚る', '～を憚る')
-            contents = contents.replace('他見を許さない', '～を許さない')
-            contents = contents.replace('多情多恨の一生を送る', '～の一生を送る')
-            contents = contents.replace('多情多恨の志士', '～の志士')
-            contents = contents.replace('立て付けが良い', '～が良い')
-            contents = contents.replace('立て付けの悪い戸', '～の悪い戸')
-            contents = contents.replace('他聞を憚る', '～を憚る')
-            contents = contents.replace('上から水がたらたら落ちる', '＝上から水が～落ちる')
-            contents = contents.replace('汗をたらたら流している', '＝汗を～流している')
-            contents = contents.replace('駄法螺を吹く', '～を吹く')
-            contents = contents.replace('断金の友', '～の友')
-            contents = contents.replace('断金の交り(契り)', '～の交り(契り)')
-            contents = contents.replace('ちくりと刺す', '～と刺す')
-            contents = contents.replace('ちくりと痛む', '～と痛む')
-            contents = contents.replace('ちちと啼く', '～と啼く')
-            contents = contents.replace('ちびりちびり飲む', '～飲む')
-            contents = contents.replace('ちゅーちゅー鳴く', '～鳴く')
-            contents = contents.replace('無用の長物', '＝無用の～')
-            contents = contents.replace('無用の長物視する', '＝無用の～視する')
-            contents = contents.replace('ちょきちょきはさみ切る', '～はさみ切る')
-            contents = contents.replace('ちょきん切る', '～切る')
-            contents = contents.replace('ちょきんと立つ', '～と立つ')
-            contents = contents.replace('犬がちんちんをする', '＝犬が～をする')
-            contents = contents.replace('月回りがいい', '～がいい')
-            contents = contents.replace('今月は月回りが悪い', '＝今月は～が悪い')
-            contents = contents.replace('息をつく', '＝息を～')
-            contents = contents.replace('嘘を吐く', '＝嘘を～')
-            contents = contents.replace('つべこべ喋べる', '～喋べる')
-            contents = contents.replace('つべこべ返答する', '～返答する')
-            contents = contents.replace('つべこべ云わずに', '～云わずに')
-            contents = contents.replace('つべこべ言うな', '～言うな')
-            contents = contents.replace('茶の出殻', '＝茶の～')
-            contents = contents.replace('繭の出殻', '＝繭の～')
-            contents = contents.replace('飛び抜けて一番になる', '～一番になる')
-            contents = contents.replace('飛び抜けて一着', '～一着')
-            contents = contents.replace('途方に暮れる', '～に暮れる')
-            contents = contents.replace('途方に暮れさせる', '～に暮れさせる')
-            contents = contents.replace('途方もない', '～もない')
-            contents = contents.replace('同窓[の友]', '～[の友]')
-            contents = contents.replace('どうのこうの言わずに', '～言わずに')
-            contents = contents.replace('どうのこうの言って承諾しない', '～言って承諾しない')
-            contents = contents.replace('どかっと腰を下ろす', '～腰を下ろす')
-            contents = contents.replace('相場がどかっと下がった', '＝相場が～下がった')
-            contents = contents.replace('胸をどきんと衝く', '＝胸を～衝く')
-            contents = contents.replace('…の度胆を抜く', '…の～を抜く')
-            contents = contents.replace('度胆を抜かれる', '～を抜かれる')
-            contents = contents.replace('呑舟の魚', '～の魚')
-            contents = contents.replace('呑舟の魚を漏らす', '～の魚を漏らす')
-            contents = contents.replace('何食わぬ顔で(顔をして)', '～顔で, ～顔をして')
-            contents = contents.replace('何食わぬ顔をする', '～顔をする')
-            contents = contents.replace('波間に漂う', '～に漂う')
-            contents = contents.replace('波間をかいくぐる', '～をかいくぐる')
-            contents = contents.replace('二進も三進も行かない', '～行かない')
-            contents = contents.replace('二進も三進も動けない', '～動けない')
-            contents = contents.replace('二の句が継げない', '～が継げない')
-            contents = contents.replace('二の句を継げなくする', '～を継げなくする')
-            contents = contents.replace('ここは寝心地がよい', '＝ここは～がよい')
-            contents = contents.replace('寝心地のよい床', '～のよい床')
-            contents = contents.replace('穿き心地の良い靴', '～の良い靴')
-            contents = contents.replace('八分の一', '～の一')
-            contents = contents.replace('はっしと切りつける', '～切りつける')
-            contents = contents.replace('打込む刀をはっしと受け止める', '＝打込む刀を～受け止める')
-            contents = contents.replace('お話中', '＝お～')
-            contents = contents.replace('お話中ですか', '＝お～ですか')
-            contents = contents.replace('お話中失礼ですが', '＝お～失礼ですが')
-            contents = contents.replace('どうも憚りさま', '＝どうも～')
-            contents = contents.replace('憚りさまですが', '～ですが')
-            contents = contents.replace('空に憚る', '＝空に～')
-            contents = contents.replace('大角[の笛]', '～[の笛]')
-            contents = contents.replace('大角を吹く', '～を吹く')
-            contents = contents.replace('反間の策', '～の策')
-            contents = contents.replace('反間苦肉の計', '～苦肉の計')
-            contents = contents.replace('敵軍に反間を放つ', '＝敵軍に～を放つ')
-            contents = contents.replace('はーはー言う', '～言う')
-            contents = contents.replace('息をきらしてはーはーいう', '＝息をきらして～いう')
-            contents = contents.replace('場数を踏む', '～を踏む')
-            contents = contents.replace('縛の縄', '～の縄')
-            contents = contents.replace('縛につく', '～につく')
-            contents = contents.replace('莫逆の友', '～の友')
-            contents = contents.replace('莫逆の交わり', '～の交わり')
-            contents = contents.replace('いくら言っても馬耳東風だ', '＝いくら言っても～だ')
-            contents = contents.replace('馬耳東風に聞き流す', '～に聞き流す')
-            contents = contents.replace('ばちゃんとドアを締める', '～[と]ドアを締める')
-            contents = contents.replace('水にばちゃんと落ちる', '＝水に～[と]落ちる')
-            contents = contents.replace('ばつを合わせる', '～を合わせる')
-            contents = contents.replace('ばつが悪い', '～が悪い')
-            contents = contents.replace('ばらばら撒く', '～撒く')
-            contents = contents.replace('ばらばら降る', '～降る')
-            contents = contents.replace('ばりばり引っ掻く', '～引っ掻く')
-            contents = contents.replace('ばりばり嚙む', '～嚙む')
-            contents = contents.replace('仕事をばりばりやる', '＝仕事を～やる')
-            contents = contents.replace('万芸に通じている人', '～に通じている人')
-            contents = contents.replace('万芸に通じて一芸を成/ナ/さない', '万芸に通じて一芸を成さない')
-            contents = contents.replace('万丈の気焰を上げる', '～の気焰を上げる')
-            contents = contents.replace('波瀾万丈だった時代', '＝波瀾～だった時代')
-            contents = contents.replace('万乗の位に上がる', '～の位に上がる')
-            contents = contents.replace('万乗の君/キミ/', '～の君/キミ/')
-            contents = contents.replace('口をぱくぱくさせる', '＝口を～させる')
-            contents = contents.replace('ぱくぱく食べる', '～食べる')
-            contents = contents.replace('タバコをぱくぱく吹かす', '＝タバコを～吹かす')
-            contents = contents.replace('口をぱくりと開いて', '＝口を～と開いて')
-            contents = contents.replace('ぱくりと食べる', '～と食べる')
-            contents = contents.replace('帆が風にぱたぱたする', '＝帆が風に～する')
-            contents = contents.replace('翼をぱたぱたする', '＝翼を～する')
-            contents = contents.replace('雨のぱたぱたいう音がする', '＝雨の～いう音がする')
-            contents = contents.replace('ほこりをぱたぱた払う', '＝ほこりを～払う')
-            contents = contents.replace('ぱちっと音がする', '～音がする')
-            contents = contents.replace('ぱちっと打つ', '～打つ')
-            contents = contents.replace('指でぱちっとはじく', '＝指で～はじく')
-            contents = contents.replace('小銃のぱちぱち言う音', '＝小銃の～言う音')
-            contents = contents.replace('手をぱちぱち叩く', '＝手を～叩く')
-            contents = contents.replace('目をぱちぱちさせる', '＝目を～させる')
-            contents = contents.replace('ぱっくり嚙みつく', '～嚙みつく')
-            contents = contents.replace('ぱっちりした目', '～した目')
-            contents = contents.replace('目をぱっちりあける', '＝目を～あける')
-            contents = contents.replace('刀をぱっちりさやに納める', '＝刀を～さやに納める')
-            contents = contents.replace('ぱっぱとタバコを吹かす', '～タバコを吹かす')
-            contents = contents.replace('ぱらぱら雨', '～雨')
-            contents = contents.replace('木の葉がぱらぱら散った', '＝木の葉が～散った')
-            contents = contents.replace('日当たりの好い', '～の好い')
-            contents = contents.replace('この部屋は日当たりが悪い', '＝この部屋は～が悪い')
-            contents = contents.replace('左褄を取る', '～を取る')
-            contents = contents.replace('左褄を取った女', '～を取った女')
-            contents = contents.replace('人払いをする', '～をする')
-            contents = contents.replace('人払いを命ずる', '～を命ずる')
-            contents = contents.replace('人払いを願う', '～を願う')
-            contents = contents.replace('火持ちが好い', '～が好い')
-            contents = contents.replace('火持ちが悪い', '～が悪い')
-            contents = contents.replace('ひゅーひゅー鳴る', '～鳴る')
-            contents = contents.replace('ひゅーひゅー鳴る音', '～鳴る音')
-            contents = contents.replace('びしゃりと打つ', '～打つ')
-            contents = contents.replace('びしゃりと本を閉じる', '～本を閉じる')
-            contents = contents.replace('雨がびしょびしょ降る', '＝雨が～降る')
-            contents = contents.replace('びしょびしょに濡れる', '～に濡れる')
-            contents = contents.replace('びっしょり汗をかく', '～汗をかく')
-            contents = contents.replace('シャツが汗でびっしょりだ', '＝シャツが汗で～だ')
-            contents = contents.replace('びりびり裂く', '～裂く')
-            contents = contents.replace('縫目をびりびり解く', '＝縫目を～解く')
-            contents = contents.replace('びりびりと震動する', '～と震動する')
-            contents = contents.replace('電撃をびりびりと感じる', '電撃を～と感じる')
-            contents = contents.replace('鬢太を張る', '～を張る')
-            contents = contents.replace('往復びんたを張る', '＝往復～を張る')
-            contents = contents.replace('ぴくぴく動く', '～動く')
-            contents = contents.replace('顔をぴくぴくさせる', '＝顔を～させる')
-            contents = contents.replace('ぴしっと石を打つ', '～石を打つ')
-            contents = contents.replace('ぴしっとむちで打つ', '～むちで打つ')
-            contents = contents.replace('不倶戴天の仇/アダ/', '～の仇/アダ/')
-            contents = contents.replace('不倶戴天の恨みをいだく', '～の恨みをいだく')
-            contents = contents.replace('不即不離の態度を持する(執る)', '～の態度を持する(執る)')
-            contents = contents.replace('不即不離の間柄になる', '～の間柄になる')
-            contents = contents.replace('ふっつり思い切る', '～思い切る')
-            contents = contents.replace('…とふっつりと手を切る', '…と～と手を切る')
-            contents = contents.replace('ふにゃふにゃ言う', '～言う')
-            contents = contents.replace('柔かくてふにゃふにゃしている', '＝柔かくて～している')
-            contents = contents.replace('…は頭がふらふらする', '…は頭が～する')
-            contents = contents.replace('…は足がふらふらする', '…は足が～する')
-            contents = contents.replace('ふらふら立ち上がる', '～立ち上がる')
-            contents = contents.replace('降り通しの雨', '～の雨')
-            contents = contents.replace('降り通しに降る', '～に降る')
-            contents = contents.replace('鼻をふんふん鳴らす', '＝鼻を～鳴らす')
-            contents = contents.replace('ふんふん嗅ぐ', '～嗅ぐ')
-            contents = contents.replace('香気芬芬たり', '＝香気～たり')
-            contents = contents.replace('臭気芬々鼻をつく', '＝臭気～鼻をつく')
-            contents = contents.replace('ぶうぶう鳴る', '～鳴る')
-            contents = contents.replace('ぶうぶう言う', '～言う')
-            contents = contents.replace('武運つたなく死ぬ', '～つたなく死ぬ')
-            contents = contents.replace('ぶつぶつ云う', '～云う')
-            contents = contents.replace('ぶつぶつ云う人', '～云う人')
-            contents = contents.replace('ぶつぶつ煮える', '～煮える')
-            contents = contents.replace('ぶんぶん言う', '～言う')
-            contents = contents.replace('兵馬倥傯の間に', '～の間に')
-            contents = contents.replace('兵馬倥傯の間に馳駆する', '～の間に馳駆する')
-            contents = contents.replace('翩々たる小才子', '～たる小才子')
-            contents = contents.replace('翩々として風に翻る', '～として風に翻る')
-            contents = contents.replace('べたりと坐る', '～と坐る')
-            contents = contents.replace('べたりとつく', '～とつく')
-            contents = contents.replace('お腹がぺこぺこだ', '＝お腹が～だ')
-            contents = contents.replace('ぺこんとお辞儀をする', '～お辞儀をする')
-            contents = contents.replace('ぺこんと凹む', '～と凹む')
-            contents = contents.replace('ぺたんと坐る', '～坐る')
-            contents = contents.replace('切手をぺたんと張る', '＝切手を～張る')
-            contents = contents.replace('ぺろりとなめる', '～となめる')
-            contents = contents.replace('ぺろりと舌を出す', '～と舌を出す')
-            contents = contents.replace('ぺろりと食べる(平らげる)', '～と食べる, ～と平らげる')
-            contents = contents.replace('奉公振りがよい', '～がよい')
-            contents = contents.replace('奉公振りが悪い', '～が悪い')
-            contents = contents.replace('したい放題に', '＝したい～に')
-            contents = contents.replace('食い放題に食う', '＝食い～に食う')
-            contents = contents.replace('言いたい放題のことを言う', '＝言いたい～のことを言う')
-            contents = contents.replace('這々の体/テイ/で', '～の体/テイ/で')
-            # contents = contents.replace('這々の体で引退る', '～の体で引退る')
-            contents = contents.replace('頰を火照らす', '＝頰を～')
-            contents = contents.replace('顔をほてらして', '＝顔を｜して～')
-            contents = contents.replace('まっかに顔をほてらせて', '＝まっかに顔を｜せて～')
-            contents = contents.replace('頰が火照る', '＝頰が～')
-            contents = contents.replace('頰がほてる', '＝頰が～')
-            contents = contents.replace('体中がほてっていた', '＝体中が｜って～いた')
-            contents = contents.replace('ほやりと笑う', '～笑う')
-            contents = contents.replace('洞が峠に陣取る', '～に陣取る')
-            contents = contents.replace('洞が峠を下がる', '～を下がる')
-            contents = contents.replace('暴虎慿河の勇', '～の勇')
-            contents = contents.replace('暴虎慿河の徒', '～の徒')
-            contents = contents.replace('ぼこぼこ音がする', '～音がする')
-            contents = contents.replace('ぼこぼこ湧き出る', '～湧き出る')
-            contents = contents.replace('ぼりぼり噛る', '～噛る')
-            contents = contents.replace('ぼりぼり掻く', '～掻く')
-            contents = contents.replace('ぼろくそに言う', '～に言う')
-            contents = contents.replace('本を傍にぽいと投げる', '＝本を傍に～投げる')
-            contents = contents.replace('ぽいと跳ぶ', '～跳ぶ')
-            contents = contents.replace('ぽかりとなぐる', '～となぐる')
-            contents = contents.replace('ぽかりと明く', '～と明く')
-            contents = contents.replace('指の節をぽきぽき鳴らす', '＝指の節を～鳴らす')
-            contents = contents.replace('ぽたり落ちる', '～落ちる')
-            contents = contents.replace('ぽたり滴る', '～滴る')
-            contents = contents.replace('汽車がぽっぽと煙を吐きながら停車場を出た',
-                                        '＝汽車が～煙を吐きながら停車場を出た')
-            contents = contents.replace('ぽっぽと湯気の出ているホット', '～湯気の出ているホット')
-            contents = contents.replace('ぽつりと一粒雨があたった', '～と一粒雨があたった')
-            contents = contents.replace('ぽつりと星が一つ残っている', '～と星が一つ残っている')
-            contents = contents.replace('ぽりぽり食べる', '～食べる')
-            contents = contents.replace('ぽりぽり爪で…をひっかく', '～爪で…をひっかく')
-            contents = contents.replace('涙をぽろぽろこぼす', '＝涙を～こぼす')
-            contents = contents.replace('ぽろぽろ砕ける', '～砕ける')
-            contents = contents.replace('ぽんとコルクを抜く', '～とコルクを抜く')
-            contents = contents.replace('ぽんと肩を叩く', '～と肩を叩く')
-            contents = contents.replace('ぽんと投げてやる', '～と投げてやる')
-            contents = contents.replace('ぽんと断る', '～と断る')
-            contents = contents.replace('ぽんぽん花火が上がった', '～花火が上がった')
-            contents = contents.replace('ぽんぽん手を鳴らす', '～手を鳴らす')
-            contents = contents.replace('ぽんぽん怒る', '～怒る')
-            contents = contents.replace('ぽーぽー鳴く', '～鳴く')
-            contents = contents.replace('ぽーぽー鳴る', '～鳴る')
-            contents = contents.replace('魔が差した', '～が差した')
-            contents = contents.replace('魔の海', '～の海')
-            contents = contents.replace('魔の手', '～の手')
-            contents = contents.replace('魔をよける', '～をよける')
-            contents = contents.replace('目が眩う', '＝目が～')
-            contents = contents.replace('待ちぼけを食う', '～を食う')
-            contents = contents.replace('丸々と太った', '～太った')
-            contents = contents.replace('丸々と肥えている', '～肥えている')
-            contents = contents.replace('万分の一', '～の一')
-            contents = contents.replace('それは耳新らしい事ではない', '＝それは～事ではない')
-            contents = contents.replace('何か耳新らしい事があるか', '＝何か～事があるか')
-            contents = contents.replace('弥陀/ミダ/の名号', '＝弥陀/ミダ/の～')
-            contents = contents.replace('六字の名号', '＝六字の～')
-            contents = contents.replace('むっくり起き上がる', '～起き上がる')
-            contents = contents.replace('むっくり肥えた', '～肥えた')
-            contents = contents.replace('むにゃむにゃ言う', '～言う')
-            contents = contents.replace('…しようという気がむらむら[と]起る',
-                                        '…しようという気が～[と]起る')
-            contents = contents.replace('煙がむらむら立ち上がる', '＝煙が～立ち上がる')
-            contents = contents.replace('病人の熱気でむんむんする', '＝病人の熱気で～する')
-            contents = contents.replace('[気が]めいる быть в подавленном настроении, прийти в уныние, пасть духом;\n気がめいって с тяжёлым сердцем;',
-                                        '[気が]めいる быть в подавленном настроении, прийти в уныние, пасть духом;\n＝気が｜って～ с тяжёлым сердцем;')
-            contents = contents.replace('[気が]めいる', '＝[気が]～')
-            contents = contents.replace('目八分に捧げる', '～に捧げる')
-            contents = contents.replace('目八分に…を見る', '～に…を見る')
-            contents = contents.replace('めりめりいう', '～いう')
-            contents = contents.replace('めりめり音がして倒れる', '～音がして倒れる')
-            contents = contents.replace('もぐもぐ[と]云う, 口をもぐもぐさせる',
-                                        '～[と]云う, ＝口を～させる')
-            contents = contents.replace('もぐもぐ嚙む', '～嚙む')
-            contents = contents.replace('もぐもぐ[と]動く', '～[と]動く')
-            contents = contents.replace('勿体をつける', '～をつける')
-            contents = contents.replace('物心が付く', '～が付く')
-            contents = contents.replace('物心付いて以来', '～付いて以来')
-            contents = contents.replace('物心のつかない内に', '～のつかない内に')
-            contents = contents.replace('門前払いを食わす', '～を食わす')
-            contents = contents.replace('門前払いを食う', '～を食う')
-            contents = contents.replace('動ともすれば, 動もすると', '～すれば, ～すると')
-            contents = contents.replace('動ともすれば…する', '～すれば…する')
-            contents = contents.replace('行きずりの人', '～の人')
-            contents = contents.replace('行きずりの縁/エン/', '～の縁/エン/')
-            contents = contents.replace('そんなことはないよ', '＝そんなことはない～')
-            contents = contents.replace('頼むよ', '＝頼む～')
-            contents = contents.replace('横槍を入れる', '～を入れる')
-            contents = contents.replace('横槍が出た', '～が出た')
-            contents = contents.replace('夜目の利く', '～の利く')
-            contents = contents.replace('夜目ではっきりとしない', '～ではっきりとしない')
-            contents = contents.replace('◇夜目遠目/トウメ/傘の中/ウチ/',
-                                        '夜目遠目傘の中')
-            contents = contents.replace('よろしきを得る', '～を得る')
-            contents = contents.replace('寛大よろしきを得る', '＝寛大～を得る')
-            contents = contents.replace('経営よろしきを得る', '＝経営～を得る')
-            contents = contents.replace('李下に冠/カンムリ/を正さず, 李下の冠',
-                                        '李下に冠を正さず, 李下の冠')
-            contents = contents.replace('俚耳に入り易/イリヤス/い', '～に入り易/イリヤス/い')
-            contents = contents.replace('俚耳に入りにくい', '～に入りにくい')
-            contents = contents.replace('槍を(太刀を)りゅうりゅうとしごく',
-                                        '＝槍(太刀)を～しごく')
-            contents = contents.replace('両手ききの人', '～の人')
-            contents = contents.replace('両天秤をかける', '～をかける')
-            contents = contents.replace('釐亳も', '～も')
-            contents = contents.replace('釐毫も違わない', '～も違わない')
-            contents = contents.replace('凜と張った目', '～張った目')
-            contents = contents.replace('凜とした態度', '～した態度')
-            contents = contents.replace('列氏寒暖計', '～寒暖計')
-            contents = contents.replace('連理の松/マツ/', '～の松/マツ/')
-            contents = contents.replace('連理の契/チギ/り', '～の契/チギ/り')
-            contents = contents.replace('六分の一', '～の一')
-            contents = contents.replace('カ氏寒暖計', '～寒暖計')
-            contents = contents.replace('セ氏寒暖計', '～寒暖計')
-            contents = contents.replace('<i>неправ., см.</i>', '<i>неправ.</i> <i>см.</i>')
-            contents = contents.replace('<i>сокр., см.</i>', '<i>сокр.</i> <i>см.</i>')
-            contents = contents.replace('\n<i>употребляется в двух формах:</i>', '')
-            contents = contents.replace('<i>уст. особая бумага, посылаемая в знак благодарности за небольшой подарок.</i>',
-                                        '<i>уст.</i> особая бумага, посылаемая в знак благодарности за небольшой подарок.')
-            contents = contents.replace('<a href="#005-67-03">おそるべき</a> <i>и др.</i>',
-                                        '<a href="#005-67-03">おそるべき</a>.')
-            contents = contents.replace('название яп. способа исчисления возраста (до 1949 г.), состоявшего в том, что год рождения считался за полный год; напр., считалось, что, в каком бы месяце 1903 г. ни родился ребёнок, с 1 января 1904 г. ему пошёл второй год',
-                                        'название яп. способа исчисления возраста (до 1949 г.)')
-            contents = contents.replace('<i>приписка после фамилии при адресовании писем.</i>',
-                                        'приписка после фамилии при адресовании писем.')
-            contents = contents.replace('[気が]腐る', '＝[気が]～')
-            contents = contents.replace('そんなに腐るな', '＝そんなに～な')
-            contents = contents.replace('化生の物', '～の物')
-            contents = contents.replace('<i>буд. что-л., ставшее живым существом; что-л., принявшее облик живого существа</i>',
-                                        '<i>буд.</i> что-л., ставшее живым существом; что-л., принявшее облик живого существа')
-            contents = contents.replace('<a href="#000-65-10">これほど</a> <i>и др.</i>',
-                                        '<a href="#000-65-10">これほど</a>')
-            contents = contents.replace('<i>ист. один из титулов придворных дам.</i>',
-                                        '<i>ист.</i> один из титулов придворных дам.')
-            contents = contents.replace('事件を劇に仕組む', '＝事件を劇に～')
-            contents = contents.replace('下に出す', '～に出す')
-            contents = contents.replace('下に取る', '～に取る')
-            contents = contents.replace('後を慕う', '＝後を～')
-            contents = contents.replace('失礼ながら…, 失礼ですが…', '～ながら, ～ですが')
-            contents = contents.replace('では失礼', '＝では～')
-            contents = contents.replace('じっと見詰める', '～見詰める')
-            contents = contents.replace('じっと我慢する(堪える)', '～我慢する, ～堪える')
-            contents = contents.replace('\n<i>в наст. вр. обычно не переводится</i>;', '')
-            contents = contents.replace(';\n4) <i>после вопр. мест. см. самые местоимения</i>', '')
-            contents = contents.replace('木という木', '＝木～木')
-            contents = contents.replace('所だった', '～だった')
-            contents = contents.replace('所です(だ)', '～です(だ)')
-            contents = contents.replace('どっこいしょと腰を下ろす', '～と腰を下ろす')
-            contents = contents.replace('物価がどんどん上がっている', '＝物価が～上がっている')
-            contents = contents.replace('どんどん売れる', '～売れる')
-            contents = contents.replace('湯をどんどん沸かす', '＝湯を～沸かす')
-            contents = contents.replace('どんどん質問する', '～質問する')
-            contents = contents.replace('美しいなあ', '＝美しい～')
-            contents = contents.replace('なあ君、そうだろう', '～君、そうだろう')
-            contents = contents.replace('猶…が如し(如くである)', '～…が如し(如くである)')
-            contents = contents.replace('…ようになる', '…ように～')
-            contents = contents.replace('…なくなる', '…なく～')
-            contents = contents.replace('抜き差しができない', '～ができない')
-            contents = contents.replace('抜き差しならぬ真実', '～ならぬ真実')
-            contents = contents.replace('今月に入ってから', '＝今月に｜って～から')
-            contents = contents.replace('梅雨に入る', '＝梅雨に～')
-            contents = contents.replace('店を張る', '＝店を～')
-            contents = contents.replace('世帯を張る', '＝世帯を～')
-            contents = contents.replace('ぱっぱとタバコを吹かす', '～タバコを吹かす')
-            contents = contents.replace('辞書を引く', '＝辞書を～')
-            contents = contents.replace('祖先を祀る', '＝祖先を～')
-            contents = contents.replace('祖先の霊を祀る', '＝祖先の霊を～')
-            contents = contents.replace('もはや五時を回った', '＝もはや五時を｜った～')
-            contents = contents.replace('…の向こうを張る', '…の～を張る')
-            contents = contents.replace('目に合う', '～に合う')
-            contents = contents.replace('持ちが良い', '～が良い')
-            contents = contents.replace('持ちをよくする', '～をよくする')
-            contents = contents.replace('そこが問題だ', '～が問題だ')
-            contents = contents.replace('～になる постричься [в монахи]; <i>обр.</i> (<i>тж.</i> 坊主に刈る) коротко '
-                                        'остричься, обрить голову;',
-                                        '～になる постричься [в монахи];\n～になる, ～に刈る <i>обр.</i> коротко остричься, '
-                                        'обрить голову;')
-            contents = contents.replace('2): ～の <i>поэтическое определение к таким словам, как</i> <a '
-                                        'href="#000-74-10">とし</a> <i>(год)</i>, <a href="#000-60-20">つき</a> <i>('
-                                        'месяц) и т. п.</i>;',
-                                        '2): ～の <i>поэтическое определение к таким словам, как год, месяц и т. п.</i>;')
-            contents = contents.replace('～のある, 勢いの好い сильный; энергичный; смелый; влиятельный;',
-                                        '～のある, ～の好い сильный; энергичный; смелый; влиятельный;')
-            contents = contents.replace('～をする(に接する) приглашать (принимать) гостей, устраивать приём;',
-                                        '～をする, ～に接する приглашать (принимать) гостей, устраивать приём;')
-            contents = contents.replace('2) (<i>тк.</i> 梶, <i>тж.</i> 楫) рулевое весло;',
-                                        '2) (<i>тк.</i> 梶) (<i>тж.</i> 楫) рулевое весло;')
-            contents = contents.replace('(<i>санскр.</i> namo, <i>сокр.</i> 南無阿弥陀仏/ナムアミダブツ/)',
-                                        '(<i>санскр.</i> namo) (<i>сокр.</i> 南無阿弥陀仏/ナムアミダブツ/)')
-            contents = contents.replace('耳が肥えている', '＝耳が｜て～いる')
-            contents = contents.replace('<i>разг. замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.</i>',
-                                        '<i>разг.</i> замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.')
-            contents = contents.replace('\n～に <i>см. ниже</i> 2;', '')
-            contents = contents.replace('2. действительно, на [самом] деле, фактически, реально; практически, на практике; <i>(в конце предл.)</i> уверяю вас!',
-                                        '2. ～[に] действительно, на [самом] деле, фактически, реально; практически, на практике; <i>(в конце предл.)</i> уверяю вас!')
+            contents = f.read()
 
-            contents = contents.replace('ё', 'е')
+            to_replace = [('<i>искажённое</i>', '<i>искаж.</i>'),
+                          ('[…', '…['),
+                          ('…[を, …に]', '…[を(に)]'),
+                          ('(<i>сопровождается в конце предложения частицами</i> [に於て]をや)', ''),
+                          ('(<i>вежл.</i> お早うございます)', ''),
+                          ('(<i>т. н.</i> じょうげん【上元】, ちゅうげん【中元】<i>и</i> かげん【下元】)', ''),
+                          ('(<i>сокр.</i> じばん【地盤】, かんばん【看板】, かばん【鞄】)',
+                           '(<i>сокр.</i> 地盤, 看板, 鞄)'),
+                          ('(<i>ант.</i> てがるい【手軽い】)', ''),
+                          (
+                              '<i>ист.</i> три царства (<i>а) Япония, Китай, Индия; б) Вэй</i> 魏, <i>У</i> 呉, '
+                              '<i>Шу</i> 蜀)',
+                              '<i>ист.</i> три царства (Япония, Китай, Индия; Вэй, У, Шу)'),
+                          ('продавец насекомых (<i>напр.</i> <a href="#000-22-17">まつむし【松虫】</a>, '
+                           '<a href="#001-53-38">すずむし【鈴虫】</a>, <i>которые ценятся за издаваемые ими '
+                           'звуки</i>).',
+                           'продавец насекомых (<i>которые ценятся за издаваемые ими звуки</i>).'),
+                          ('(<i>напр.</i> 5 — <i>ср.</i> <a href="#008-31-45">ごあく【五悪】</a>, '
+                           '<a href="#006-52-79">ごかい【五戒】</a>, <a href="#009-59-31">ごきょう【五経】</a> <i>и т. '
+                           'п.</i>)', ''),
+                          (' (<i>напр.</i> 瓜 <i>и</i> 爪)', ''),
+                          (' (<i>напр.</i> ぴかぴか)', ''),
+                          (' (<i>напр.</i> 上, 三, 凸)', ''),
+                          ('(<i>напр.</i> 梅の花)', ''),
+                          ('(<i>при отвлечённом счёте, ср.</i> ひ【一】, ふ【二】, み【三】)',
+                           '(<i>при отвлечённом счёте</i>'),
+                          ('(<i>из-за созвучия слов</i> <a href="#006-38-91">こおりがし【氷菓子】</a> <i>и</i> <a '
+                           'href="#007-72-05">こうりがし【高利貸し】</a>)',
+                           '(<i>из-за созвучия слов</i> 氷菓子 <i>и</i> 高利貸し)'),
+                          ('(<i>обычно</i> あまさん【尼さん】)', '(<i>обычно</i> 尼さん)'),
+                          (
+                              '(<i>ср.</i> <a href="#006-83-43">にのぜん</a>, <a href="#000-74-07">にのいと</a> <i>и др. слова, '
+                              'начинающиеся с</i> にの…【二の…】)', ''),
+                          (' (<i>см.</i> しょうぎょうほうそう【商業放送】)', ''),
+                          ('(<i>англ.</i> baby <i>и яп.</i> たんす【簞笥】)',
+                           '(<i>англ.</i> baby <i>и яп.</i> 簞笥)'),
+                          ('好い気味だ', '～だ'),
+                          ('…[の]模様だ', '…[の]～だ'),
+                          ('宜なるかな', '～なるかな'),
+                          ('胸糞が悪い', '～が悪い'),
+                          ('糞味噌にけなす', '～にけなす'),
+                          ('</i> いわざる, きかざる, みざる <i>—', ''),
+                          ('ぽきんと折れる', '～折れる'),
+                          ('ぺちゃくちゃしゃべる', '～しゃべる'),
+                          ('べちゃべちゃしゃべる', '～しゃべる'),
+                          ('へとへとに疲れる', '～に疲れる'),
+                          ('ぶらぶら下がる', '～下がる'),
+                          ('[足の]踏み所もない', '…[足の]～もない'),
+                          ('…の顰に傚う', '…の～に傚う'),
+                          (
+                              '(<i>8 февраля, в Киото 8 декабря, день подношения храму Авасима сломанных иголок, '
+                              'накопившихся за год; в этот день отдыхают от шитья; Храм Авасима был избран потому, '
+                              'что иначе назывался</i> Хариса́йнё 婆利才女)', ''),
+                          ('腹鼓を打つ', '～を打つ'),
+                          ('腹ごなしに散歩する', '～に散歩する'),
+                          (' 明州', ''),
+                          ('にゃおと鳴く', '～と鳴く'),
+                          ('にたりと笑う', '～と笑う'),
+                          ('どたりと落ちる', '～と落ちる'),
+                          ('頬杖を突く', '～を突く'),
+                          ('付きが良い', '～が良い'),
+                          ('手枕をして寝る', '～をして寝る'),
+                          ('外輪(鰐)の足', '～の足'),
+                          ('金離れの悪い', '～の悪い'),
+                          ('(<i>от кит.</i> сянь 仙)', '(<i>от кит.</i> 仙 [сянь])'),
+                          ('…は世間知らずだ', '…は～だ'),
+                          ('ずでんどうと倒れる', '～と倒れる'),
+                          ('じろじろ見る', '～見る'),
+                          ('しんにゅうをかけて言う', '～をかけて言う'),
+                          ('さめざめと泣く', '～と泣く'),
+                          ('ごろりと寝転ぶ', '～と寝転ぶ'),
+                          ('(<i>санскр.</i> Pañca Skandhāh: 色 <i>плоть</i>, 受 <i>ощущения и чувства</i>, '
+                           '想 <i>воображение</i>, 行 <i>духовная деятельность</i>, 識 <i>познание</i>)', ''),
+                          ('こっくりこっくりやる(居眠りをする)', '～やる, ～居眠りをする'),
+                          ('ぐりはまに行く', '～に行く'),
+                          ('(<i>сокр.</i> 多伽羅, <i>санскр.</i> tagara)',
+                           '(<i>сокр.</i> 多伽羅) (<i>санскр.</i> tagara)'),
+                          ('きゃっと叫ぶ', '～叫ぶ'),
+                          ('お聞きに入れる', '～に入れる'),
+                          ('陰(蔭)口をいう(利く)', '～をいう, ～を利く'),
+                          ('追い立てを食う', '～を食う'),
+                          ('遺腹の子', '～の子'),
+                          ('居心地のよい', '～のよい'),
+                          ('主顔に振る舞う', '～に振る舞う'),
+                          ('からからと笑う', '～と笑う'),
+                          ('相々傘で行く', '～で行く'),
+                          ('愛想尽かしを言う', '～を言う'),
+                          ('相槌を打つ', '～を打つ'),
+                          ('飽くことを知らぬ', '～ことを知らぬ'),
+                          ('あけっぴろげの笑いを浮べる', '～の笑いを浮べる'),
+                          ('明け残る空', '～空'),
+                          ('足拵えを厳重にする', '～を厳重にする'),
+                          ('足触りがよい', '～がよい'),
+                          ('足なれた人', '～人'),
+                          ('足湯を使う', '～を使う'),
+                          (
+                              'атэдзи, искусственно (неправильно) подобранные иероглифы <i>(1) иероглифы, которыми пишутся некоторые слова японского и реже китайского происхождения по смыслу слова в целом, а не по обычному чтению каждого иероглифа в отдельности:</i> 平時 <i>для слова</i> ицумо <i>«всегда, обычно»;</i> 真実 <i>для слова</i> хонто: <i>«правда, истина»; 2) иероглифы, употреблённые чисто фонетически:</i> 目出度く мэдэтаку <i>«успешно»)</i>',
+                              'атэдзи\n1) <i>иероглифы, которыми '
+                              'пишутся некоторые слова японского и реже китайского происхождения по смыслу слова в целом, '
+                              'а не по обычному чтению каждого иероглифа в отдельности</i>;\n2) <i>иероглифы, употреблённые чисто '
+                              'фонетически</i>'),
+                          ('跡白浪と逃げる(消えてしまう)', '～と逃げる, ～消えてしまう'),
+                          ('あぶあぶいう, あぶあぶやる', '～いう, ～やる'),
+                          ('雨まじりの雪', '～の雪'),
+                          ('荒胆をひしぐ(抜く)', '～をひしぐ, ～を抜く)'),
+                          ('<i>см.</i> <a href="#003-07-11">ぎしん【疑心】</a>.',
+                           '<i>посл.</i> у страха глаза велики (<i>букв.</i> страх порождает чёрных чертей).'),
+                          ('…は偉とするに足る', '…は～とするに足る'),
+                          ('言い出しっ屁だから君からやりたまえ', '～だから君からやりたまえ'),
+                          ('生き恥をさらす', '～をさらす'),
+                          ('一議に及ばず', '～に及ばず'),
+                          ('一物あらば一累/ルイ/を添う', '一物あらば一累を添う'),
+                          ('一眸の中/ウチ/に収める', '～の中/ウチ/に収める'),
+                          ('一騎当千のつわもの', '～のつわもの'),
+                          ('一炊の夢/ユメ/', '～の夢/ユメ/'),
+                          ('一寸逃れを云う', '～を云う'),
+                          ('いっちょういきましょう', '～いきましょう'),
+                          ('一敗地に塗れる', '～地に塗れる'),
+                          ('一風変わった男', '～変わった男'),
+                          ('逸を以て労を待つ', '～を以て労を待つ'),
+                          ('田舎っぽく見える', '～見える'),
+                          ('居抜きのままで買う', '～のままで買う'),
+                          ('命からがら逃げる', '～逃げる'),
+                          ('命勝負と申す', '～と申す'),
+                          ('意表に出る', '～に出る'),
+                          ('居待の月', '～の月'),
+                          ('今迄の所', '～の所'),
+                          ('今までずっと', '～ずっと'),
+                          ('色気抜きで飲む', '～で飲む'),
+                          ('色よい返事', '～返事'),
+                          ('曰く付きの女', '～の女'),
+                          ('…と言わず', '…と～'),
+                          ('と言わぬばかりに', '…と～ばかりに'),
+                          ('浮かぬ顔をする', '～顔をする'),
+                          ('浮河竹に身を沈める', '～に身を沈める'),
+                          ('烏合の衆', '～の衆'),
+                          ('…に後手に縛る', '…に～に縛る'),
+                          ('後指を差す', '～を差す'),
+                          ('嘘八百を並べ立てる', '～を並べ立てる'),
+                          ('梲が上がらない', '～が上がらない'),
+                          ('内八文字を切る', '～を切る'),
+                          ('腕っぷしの強い男', '～の強い男'),
+                          ('兔の毛でついたほどのすきもない', '～でついたほどのすきもない'),
+                          ('有髪の尼', '～の尼'),
+                          ('怨みっこのないように, 怨みっこなしに', '～のないように, ～なしに'),
+                          ('рыбы а́ю (鮎)', 'рыбы а́ю'),
+                          ('嬉し泣きに泣く', '～に泣く'),
+                          ('上の空', '～の空'),
+                          ('得も言われぬ', '～も言われぬ'),
+                          ('依估の沙汰/サタ/', '～の沙汰/サタ/'),
+                          ('…は嘔吐く', '…は～'),
+                          ('得体の知れない', '～の知れない'),
+                          ('笑壷に入/イ/る', '～に入/イ/る'),
+                          ('燕趙悲歌の士', '～の士'),
+                          ('猿臂を伸ばす', '～を伸ばす'),
+                          ('おいおい泣く', '～泣く'),
+                          ('老恥をかく', '～をかく'),
+                          ('大胡坐をかく', '～をかく'),
+                          ('大腐りに腐って', '～に腐って'),
+                          ('大雀の鉄砲', '～の鉄砲'),
+                          ('大味噌を付ける', '～を付ける'),
+                          ('…を大目に見る', '…を～に見る'),
+                          ('大揉めに揉める', '～に揉める'),
+                          ('お蚕ぐるみでいる', '～でいる'),
+                          ('<i>то же, что</i> おかえりなさい, <i>см.</i> <a href="#003-89-20">かえる【帰る】</a>.',
+                           '～なさい добро пожаловать! <i>(приветствие члену семьи, вернувшемуся домой со службы, из школы '
+                           'и т. п.)</i>;'),
+                          ('(= おかえりなさい) <i>см.</i> <a href="#003-89-20">かえる【帰る】</a>',
+                           '<i>см.</i> <a href="000-10-29">おかえり【お帰り】 2 (～なさい)</a>'),
+                          ('奥さん孝行の夫', '～の夫'),
+                          ('恐れ気もなく', '～もなく'),
+                          ('お手の筋だ', '～だ'),
+                          ('男泣きに泣く', '～に泣く'),
+                          ('お見外れ申しました', '～申しました'),
+                          ('親分風を吹かす', '～を吹かす'),
+                          ('…は女癖が悪い', '…は～が悪い'),
+                          ('お乳母日傘で育てる', '～で育てる'),
+                          (', <i>ср.</i> <a href="#005-96-67">ごぎょう【五行】</a>', ''),
+                          ('華を去り実/ジツ/に就く', '～を去り実/ジツ/に就く'),
+                          (
+                              '<i>(напр. образование из</i> 山, 上, 下 <i>иероглифа</i> 峠<i>)</i>; <i>ср.</i> <a '
+                              'href="#008-24-88">りくしょ【六書】</a>', ''),
+                          ('会員外の者', '～の者'),
+                          ('快哉を叫ぶ', '～を叫ぶ'),
+                          (', напр.</i> 河, 峰<i>', ''),
+                          ('掻い撫での作者', '～の作者'),
+                          ('顔向けが出来ない, 顔向けならぬ', '～が出来ない, ～ならぬ'),
+                          ('掛かりつけの医者', '～の医者'),
+                          ('加冠の式', '～の式'),
+                          ('書き具合がいい', '～がいい'),
+                          ('掛心地のよい', '～のよい'),
+                          ('瘡気と自惚/ウヌボ/れのないものはない', '瘡気と自惚れのないものはない'),
+                          ('華胥の国に遊ぶ', '～の国に遊ぶ'),
+                          ('華燭の典 ', '～の典 '),
+                          ('拍手を打つ', '～を打つ'),
+                          ('加除式のノート', '～のノート'),
+                          ('(黄河, <i>букв.</i> жёлтой реки) станут голубыми (清)',
+                           '(<i>букв.</i> жёлтой реки) станут голубыми'),
+                          ('片息をつく', '～をつく'),
+                          ('肩車に乗せる', '～に乗せる'),
+                          ('かたりと音を立てて落ちる', '～と音を立てて落ちる'),
+                          ('片ガラスの時計', '～の時計'),
+                          ('隔靴掻痒の感がある', '～の感がある'),
+                          ('齧り付き主義を取る', '～を取る'),
+                          ('竈持ちのよい女', '～のよい女'),
+                          ('からころ音を立てる', '～音を立てる'),
+                          ('かるが故に', '～が故に'),
+                          ('驩を交じえる', '～を交じえる'),
+                          ('侃々諤々の論', '～の論'),
+                          ('汗顔の至りである', '～の至りである'),
+                          ('神ながらの道', '～の道'),
+                          ('神嘗の祭/マツリ/', '～の祭/マツリ/'),
+                          ('幹部級の人', '～の人'),
+                          ('完膚なきまで', '～なきまで'),
+                          ('管鮑の交わり', '～の交わり'),
+                          ('官僚畑の政治家', '～の政治家'),
+                          ('画餅に帰する', '～に帰する'),
+                          ('がみがみ言う', '～言う'),
+                          ('(<i>сокр.</i> 僧伽藍摩, <i>санскр.</i> Samgharama)',
+                           '(<i>сокр.</i> 僧伽藍摩) (<i>санскр.</i> Samgharama)'),
+                          ('側[の者]', '～[の者]'),
+                          ('雁字搦み(め)に縛る', '～に縛る'),
+                          ('頑丈作りの男', '～の男'),
+                          ('旗印の下に', '～の下に'),
+                          ('古事記 ', ''),
+                          (' 日本書紀', ''),
+                          ('きしきし鳴る', '～鳴る'),
+                          ('帰心矢のごとし', '～矢のごとし'),
+                          ('喜字の齢/ヨワイ/', '～の齢/ヨワイ/'),
+                          ('驥足を伸ばす', '～を伸ばす'),
+                          ('後朝の別れ', '～の別れ'),
+                          ('九牛の一毛/イチモウ/', '～の一毛/イチモウ/'),
+                          ('九五の位/クライ/', '～の位/クライ/'),
+                          ('九仞の功/コウ/を一簣/イッキ/に虧/カ/く', '九仞の功を一簣に虧く'),
+                          ('虚々実々の戦術', '～の戦術'),
+                          ('曲学阿世の徒', '～の徒'),
+                          ('遽然として退場する', '～として退場する'),
+                          ('居然として動かない', '～として動かない'),
+                          ('巨歩を進める', '～を進める'),
+                          ('きょろきょろ眺める, 目をきょろきょろさせる', '～眺める, ＝目を～させる'),
+                          ('きりょう自慢の娘', '～の娘'),
+                          ('槿花一日の栄', '～の栄'),
+                          ('槿花一朝の夢', '～の夢'),
+                          ('金枝玉葉[の身]', '～[の身]'),
+                          (' (琴)', ''),
+                          ('琴瑟相和/アイワ/す[る]', '～相和/アイワ/す[る]'),
+                          ('ぎすばった顔付', '～顔付'),
+                          ('ぎちぎち言う音', '～言う音'),
+                          ('牛歩で進む', '～で進む'),
+                          ('魚腹に葬られる, 魚腹を肥/コ/やす', '～に葬られる, ～を肥/コ/やす'),
+                          ('ぎらりと光る', '～と光る'),
+                          ('ぎりぎり歯を鳴らす', '～歯を鳴らす'),
+                          ('ぎーぎーいう, ぎーぎー音がする', '～いう, ～音がする'),
+                          ('苦学力行の士', '～の士'),
+                          ('口利き役を買って出る', '～を買って出る'),
+                          ('口ぎれいな事を言う', '～な事を言う'),
+                          ('口拍子を取る', '～を取る'),
+                          ('くっくと笑う', '～と笑う'),
+                          ('苦肉の計(策)', '～の計(策)'),
+                          ('首斬り反対を叫ぶ', '～を叫ぶ'),
+                          ('隈ない月光', '～月光'),
+                          ('倉作りの家', '～の家'),
+                          ('呉れ得の貰い損', '～の貰い損'),
+                          ('黒山の様な人だかり', '～の様な人だかり'),
+                          ('(знаки, <i>напр.</i> 一, 二, 三, 上, 中, 下, レ, <i>указывающие',
+                           '(<i>знаки, указывающие'),
+                          ('具眼の士', '～の士'),
+                          ('ぐしゃぐしゃにこわれる', '～にこわれる'),
+                          ('ぐっすり眠る', '～眠る'),
+                          ('ぐつぐつ煮る', '～煮る'),
+                          ('ぐてんぐてんに酔っぱらう', '～に酔っぱらう'),
+                          ('ぐびりぐびり飲む', '～飲む'),
+                          ('傾国の美人', '～の美人'),
+                          ('決河の勢で', '～の勢で'),
+                          ('闕下に伏奏す', '～に伏奏す'),
+                          ('逆鱗に触れる', '～に触れる'),
+                          ('下司口を利く', '～を利く'),
+                          ('げっそり痩せる', '～痩せる'),
+                          ('原級留置の生徒', '～の生徒'),
+                          ('…目に遭わせる', '…目に～'),
+                          ('げーげーする(言う)', '～する, ～言う'),
+                          ('小当りに当って見る', '～に当って見る'),
+                          ('好奇の念', '～の念'),
+                          ('公聞に達する', '～に達する'),
+                          ('ここと鳴く', '～と鳴く'),
+                          ('心行くばかり', '～ばかり'),
+                          ('小腰を屈める', '～を屈める'),
+                          ('こつんと頭を打ちつける', '～と頭を打ちつける'),
+                          ('ことりと音がした', '～と音がした'),
+                          ('この段御通知申し上げます', '～御通知申し上げます'),
+                          ('鼓腹撃壌の民/タミ/', '～の民/タミ/'),
+                          ('小股に歩く', '～に歩く'),
+                          ('◇小股をすくう', '～をすくう'),
+                          ('小耳に挟む', '～に挟む'),
+                          ('こりこり音がする', '～音がする'),
+                          ('こんがりと焼けている', '～と焼けている'),
+                          ('豪の者', '～の者'),
+                          ('傲慢不遜な', '～な'),
+                          ('ごくりと飲む', '～と飲む'),
+                          ('五節の舞/マイ/', '～の舞/マイ/'),
+                          ('ごつんと打つ', '～と打つ'),
+                          ('…の伍伴に入/ハイ/る', '…の～に入/ハイ/る'),
+                          ('五倫[の道/ドウ/]', '～[の道/ドウ/]'),
+                          ('ごーんと鳴る', '～と鳴る'),
+                          ('逆帆を食う', '～を食う'),
+                          ('酒虫が起る', '～が起る'),
+                          ('避くべき事', '～事'),
+                          ('探り足で行く', '～で行く'),
+                          ('差しぐむ涙', '～涙'),
+                          ('砂上の楼閣/ロウカク/', '～の楼閣/ロウカク/'),
+                          ('札びらを切る', '～を切る'),
+                          ('薩摩守を決めこむ', '～を決めこむ'),
+                          ('里腹三日/サンニチ/', '里腹三日'),
+                          ('Ма-Хан</i> 馬韓, <i>Пйон-Хан</i> 弁韓 <i>и Син-Хан</i> 辰韓; <i>',
+                           'Ма-Хан, Пйон-Хан и Син-Хан; '),
+                          ('三顧の礼をとる', '～の礼をとる'),
+                          ('三舟の才', '～の才'),
+                          ('三寸の舌/シタ/を振う', '～の舌/シタ/を振う'),
+                          ('三船の才', '～の才'),
+                          ('【三舟】(の才)', '【三舟】(の才)'),
+                          ('酸鼻を極めた', '～を極めた'),
+                          ('ざくりと包丁を入れる', '～と包丁を入れる'),
+                          ('ざぶりと湯に入/ハイ/る', '～[と]湯に入/ハイ/る'),
+                          ('ざぶんと飛び込む', '～[と]飛び込む'),
+                          ('匹股を踏む', '～を踏む'),
+                          ('獅子奮迅の勢いで', '～の勢で'),
+                          ('七分の二', '～の二'),
+                          ('七歩の才/サイ/', '～の才'),
+                          ('しめこの兔/ウサギ/', '～の兔'),
+                          ('(歩) ', ''),
+                          ('社稷の臣', '～の臣'),
+                          ('しゃっちょこ立ちしても及ばない', '～しても及ばない'),
+                          ('…は宗旨違いだ', '…は～だ'),
+                          ('首鼠両端を持/ジ/す', '～両端を持/ジ/す'),
+                          ('出処進退を誤らず', '～を誤らず'),
+                          ('出藍の誉/ホマレ/がある', '～の誉/ホマレ/がある'),
+                          ('しらを切る', '～を切る'),
+                          ('尻居に倒れる', '～に倒れる'),
+                          ('尻馬に乗る', '～に乗る'),
+                          ('尻餅をつく', '～をつく'),
+                          ('心身にこたえる', '～にこたえる'),
+                          ('自家薬籠中の物とする', '～の物とする'),
+                          ('自成の人', '～の人'),
+                          ('地団駄[を]踏む', '～[を]踏む'),
+                          ('自知の明/メイ/がある', '～の明/メイ/がある'),
+                          ('事務系統の職員(従業員)', '～の職員, ～の従業員'),
+                          ('十中の八九まで', '～の八九まで'),
+                          ('…の術中に陥る', '…の～に陥る'),
+                          ('…のため寿盃を挙げる', '…のため～を挙げる'),
+                          ('順風満帆のうち', '～のうち'),
+                          ('上巳の節句/セック/', '～の節句/セック/'),
+                          ('冗談事じゃない', '～じゃない'),
+                          ('人後に落ちない', '～に落ちない'),
+                          ('水魚の交わり', '～の交わり'),
+                          ('すいすい[と]飛ぶ', '～[と]飛ぶ'),
+                          ('陬遠の地', '～の地'),
+                          ('趨否を決する', '～を決する'),
+                          ('好き合って夫婦になる', '～夫婦になる'),
+                          ('すってんころりんと転ぶ', '～転ぶ'),
+                          ('すとんところぶ', '～ころぶ'),
+                          ('住心地のよい', '～のよい'),
+                          ('擦れ違いに行き過ぎる', '～に行き過ぎる'),
+                          ('座り心地がいい', '～がいい'),
+                          ('寸々に切る', '～に切る'),
+                          ('ずぶりと刺す', '～[と]刺す'),
+                          ('ずぶ六に酔う(なる)', '～に酔う, ～になる'),
+                          ('ずるりと落ちる', '～と落ちる'),
+                          ('臍下丹田に力を入れる', '～に力を入れる'),
+                          ('生殺与奪の権', '～の権'),
+                          ('生死不明の人', '～の人'),
+                          ('政治家肌の人', '～の人'),
+                          ('聖聞に達する', '～に達する'),
+                          ('世外に起然とする', '～に起然とする'),
+                          ('尺寸の地 ', '～の地 '),
+                          ('潜航艇式の遣り方', '～の遣り方'),
+                          ('千仞の谷', '～の谷'),
+                          ('先鞭を着ける', '～を着ける'),
+                          ('; <i>напр.</i> 眼科専門医 офтальмолог', ''),
+                          ('贅沢三昧に暮す', '～に暮す'),
+                          ('漸を追(逐)って', '～追(逐)って'),
+                          ('…に全人格を傾倒する', '…に～を傾倒する'),
+                          ('禅門に入/ハイ/る', '～に入/ハイ/る'),
+                          ('前略[御免下さい]', '～[御免下さい]'),
+                          ('箏の琴/コト/', '～の琴/コト/'),
+                          ('…が捜査線上に現われる(浮ぶ)', '…が～に現われる, …が～に浮ぶ'),
+                          ('壮士風の男', '～の男'),
+                          ('宋襄の仁/ジン/', '～の仁/ジン/'),
+                          ('鏘然として鳴る', '～として鳴る'),
+                          ('総ルビの本', '～の本'),
+                          ('足労をかける', '～をかける'),
+                          ('外八文字を切る', '～を切る'),
+                          ('俗耳に入/イ/る', '～に入/イ/る'),
+                          ('高あぐらをかく', '～をかく'),
+                          ('…は高手小手に縛られた', '…は～に縛られた'),
+                          ('高見の見物をする', '～の見物をする'),
+                          ('田毎の月/ツキ/', '～の月'),
+                          ('多士済々/セイセイ/', '～済々/セイセイ/'),
+                          ('立ち竦みの状態である', '～の状態である'),
+                          ('…の中/ウチ/に立ち交る', '…の中/ウチ/に～'),
+                          ('酒は憂/ウレ/いの玉ぼうき', '酒は憂いの玉ぼうき'),
+                          ('太郎と花子/ハナコ/', '太郎と花子'),
+                          ('大尽風を吹かす', '～を吹かす'),
+                          (' 大阪毎日[新聞]', ''),
+                          ('…に卵を抱かす', '…に卵を～'),
+                          ('出しっ放しにして置く', '～にして置く'),
+                          ('脱兔の如く', '～の如く'),
+                          ('だらしがない', '～がない'),
+                          (' (<i>не смешивать с формой связки</i> だ)', ''),
+                          ('弾丸黒子の地', '～の地'),
+                          ('断腸の思いがする', '～の思いがする'),
+                          ('千鳥形に進む', '～に進む'),
+                          ('ちゃきちゃきはさむ', '～はさむ'),
+                          ('ちゃっかりしている', '～している'),
+                          ('茶屋酒の味を覚える', '～の味を覚える'),
+                          ('超然主義を取る', '～を取る'),
+                          ('頂門の一針', '～の一針'),
+                          ('直情径行型の人', '～の人'),
+                          ('ちょこんと木に止まる', '～木に止まる'),
+                          ('ちょっかいを出す', '～を出す'),
+                          ('…の枕席に侍/ジ/す', '…の～に侍/ジ/す'),
+                          (
+                              '<i>(слово-каламбур, основанное на том, что иероглиф</i> 百 <i>без верхней черты, т. е. 100 '
+                              'минус 1, имеет вид</i> 白 <i>«белый»)</i>', ''),
+                          ('(妻 <i>здесь заменяет</i> 爪)', ''),
+                          ('強腰に出る', '～に出る'),
+                          ('手置きが悪い', '～が悪い'),
+                          ('敵影を認めず, 敵影無し', '～を認めず, ～無し'),
+                          ('てくで歩く', '～で歩く'),
+                          ('てくてく歩く', '～歩く'),
+                          ('手ぐすねを引く, 手ぐすねを引いて待っている', '～を引く, ～を引いて待っている'),
+                          ('手玉に取る', '～に取る'),
+                          ('鉄火肌の女', '～の女'),
+                          ('轍鮒の急', '～の急'),
+                          ('手鼻をかむ', '～をかむ'),
+                          ('天金の本', '～の本'),
+                          ('椽大の筆を揮う', '～の筆を揮う'),
+                          (
+                              '<i>(напр.</i> お <i>иероглифа</i> 悪 <i>в знач. «ненависть» при более частом</i> あく <i>в '
+                              'знач. «зло»)</i>', ''),
+                          ('天聴に達する', '～に達する'),
+                          ('陶然と酔う', '～と酔う'),
+                          ('刀筆の吏', '～の吏'),
+                          ('遠耳が利く', '～が利く'),
+                          ('年甲斐も無い', '～も無い'),
+                          ('とっぽいやつ', '～やつ'),
+                          ('飛び切りをやる', '～をやる'),
+                          ('同学の友', '～の友'),
+                          ('同姓同名の人', '～の人'),
+                          ('同体に落ちる', '～に落ちる'),
+                          ('どうと倒れる', '～倒れる'),
+                          ('道徳堅固の人', '～の人'),
+                          ('どかんと落ちる', '～落ちる'),
+                          ('度外して置く', '～して置く'),
+                          ('独酌で飲む', '～で飲む'),
+                          ('…の毒手にかかる', '…の～にかかる'),
+                          ('…の毒刃に倒れる', '…の～に倒れる'),
+                          ('どじを踏む', '～を踏む'),
+                          ('どでん買越/カイコ/す(うりこす)', '～買越/カイコ/す, ～うりこす'),
+                          ('怒髪天を突く', '～天を突く'),
+                          ('どぶんと落ちる', '～落ちる'),
+                          ('どろんを決める', '～を決める'),
+                          ('内顧の憂い(煩い)', '～の憂い, ～の煩い'),
+                          ('長葉の石持草/イシモチソー/', '～の石持草/イシモチソー/'),
+                          ('亡き数に入/ハイ/る', '～に入/ハイ/る'),
+                          ('泣き通しに泣く', '～に泣く'),
+                          ('慰めようもなく, 慰めようもないほど', '～もなく, ～もないほど'),
+                          ('名乗りをあげる', '～をあげる'),
+                          ('生爪をはがす', '～をはがす'),
+                          ('南山の寿', '～の寿'),
+                          ('難中の難事', '～の難事'),
+                          ('苦味走った顔付', '～顔付'),
+                          ('…を憎からず思う', '…を～思う'),
+                          ('二軒建の家', '～の家'),
+                          ('二三分の所である', '～の所である'),
+                          (': 両', ''),
+                          ('似たり寄ったりだ', '～だ'),
+                          ('にっと笑う', '～笑う'),
+                          ('二本差しの武士', '～の武士'),
+                          ('二枚開きの戸', '～の戸'),
+                          ('入御あらせられる', '～あらせられる'),
+                          ('忍の一字', '～の一字'),
+                          ('根上がりの松', '～の松'),
+                          ('猫糞を極める', '～を極める'),
+                          ('寝酒を飲む', '～を飲む'),
+                          ('寝待ちの月', '～の月'),
+                          ('寝耳に水', '～に水'),
+                          ('のっぺりした顔', '～した顔'),
+                          ('背汗の至りです', '～の至りです'),
+                          ('背水の陣/ジン/を布く', '～の陣/ジン/を布く'),
+                          ('白玉楼中の人となる', '～の人となる'),
+                          (
+                              ' (<i>напр. слоги</i> の <i>и</i> さ <i>в</i> ぼくのつくえ(樸の机) <i>будет</i> ぼノサくのつノサくえ)', ''),
+                          ('果たせるかな', '～かな'),
+                          ('八掛けで卸す', '～で卸す'),
+                          ('八字の眉', '～の眉'),
+                          (
+                              '(<i>букв.</i> 8½ ри, <i>слово-каламбур: жареный батат по вкусу похож на каштан (по-японски '
+                              '— кури), а слово «кури» можно фонетически написать знаками</i> 九里, <i>что значит «девять ри»; но так '
+                              'как батат всё же не каштан, то он «8½ ри»</i>)', ''),
+                          (
+                              '(<i>первые четыре см.</i> <a href="#004-67-90">しく【四苦】</a>, <i>плюс муки разлуки любящих</i> '
+                              '愛別離/アイベツリ/; <i>встречи с ненавистью</i> 怨憎会/オンゾウエ/, <i>неисполнения желаний</i> 求不得/クフトク/, '
+                              '<i>расцвета духовных способностей</i> 五陰盛/ゴオンジョウ/)',
+                              '(<i>первые четыре плюс муки разлуки любящих, встречи с ненавистью, неисполнения желаний, '
+                              'расцвета духовных способностей</i>)'),
+                          ('八色の姓/カバネ/', '～の姓/カバネ/'),
+                          (' (真人/マヒト/, 朝臣/アソミ/, 宿爾/スクネ/, 忌寸/イミキ/, 道師/ミチノシ/, 臣/オミ/, 連/ムラジ/, 稲置/イナギ/)', ''),
+                          ('(<i>китайской медицины, см.</i> <a href="#004-13-59">よもぎ</a>, '
+                           '<a href="#007-20-64">くまつづら</a>, <a href="#005-63-47">おうばこ</a>, <a href="#007-73-25">おなもみ</a>, '
+                           '<a href="#003-02-17">しょうぶ【菖蒲】</a>, <a href="#000-62-80">すいかずら</a>, <a href="#000-08-32">はこべ</a>, '
+                           '<a href="#008-74-72">はす【蓮】</a>, <i>однако при перечислении этих трав</i> はす <i>пишется</i> 荷葉)',
+                           '(<i>китайской медицины</i>)'),
+                          ('はったりを行う', '～を行う'),
+                          ('はっと思う ', '～思う '),
+                          ('八方美人型の性格', '～の性格'),
+                          ('…は初耳だ', '…は～だ'),
+                          ('話し半分に聞く', '～に聞く'),
+                          ('鼻持ちがならない', '～がならない'),
+                          ('腹塞ぎに食べる', '～に食べる'),
+                          ('; напр.</i> 弓二張/ユミフタハリ/ два лука', ''),
+                          ('半堅気な女', '～な女'),
+                          ('繁簡よろしきを得た', '～よろしきを得た'),
+                          ('半眼で見る', '～で見る'),
+                          (' (パ, ピ, プ, ぺ, ポ)', ''),
+                          ('半身に構える', '～に構える'),
+                          ('売文の徒', '～の徒'),
+                          ('抜山蓋世の勇がある', '～の勇がある'),
+                          ('荊棘がきに引っかく', '～に引っかく'),
+                          ('万止むを得なければ', '～止むを得なければ'),
+                          ('万斛の涙を注ぐ', '～の涙を注ぐ'),
+                          ('万仭の谷', '～の谷'),
+                          ('晩節を全うする', '～を全うする'),
+                          ('万籟絶/タ/ゆ', '～絶/タ/ゆ'),
+                          ('万緑叢中の紅一点', '～中の紅一点'),
+                          ('贔屓目に見る', '～に見る'),
+                          ('非業の死(最期)を遂げる', '～の死(最期)を遂げる'),
+                          ('非業消滅のため', '～のため'),
+                          ('直押しに押し寄せる', '～に押し寄せる'),
+                          ('ひた走りに走る', '～に走る'),
+                          ('左団扇で暮らす', '～で暮らす'),
+                          ('必死必中の武器', '～の武器'),
+                          ('筆誅を加える', '～を加える'),
+                          ('筆陣を張る', '～を張る'),
+                          ('一泡吹かせてやる', '～吹かせてやる'),
+                          ('一芝居を打つ', '～を打つ'),
+                          ('人好きのいい', '～のいい'),
+                          ('人好きのわるい', '～のわるい'),
+                          ('一堪りもなく', '～もなく'),
+                          ('人っ子ひとり見えない(いない)', '～ひとり見えない(いない)'),
+                          ('一照り照ると', '～照ると'),
+                          ('一肌脱/ヌ/ぐ', '～脱/ヌ/ぐ'),
+                          ('ひと降りほしいですね', '～ほしいですね'),
+                          ('独り言を言う', '～を言う'),
+                          ('独り佳居で暮らす', '～で暮らす'),
+                          ('霏々として降る', '～として降る'),
+                          ('百聞一見に如/シ/かず', '百聞一見に如かず'),
+                          ('百万台に達する', '～に達する'),
+                          ('百味の飲食', '～の飲食'),
+                          ('飆々と鳴る', '～と鳴る'),
+                          ('表裏反覆常/ツネ/がない', '～常/ツネ/がない'),
+                          ('ひんひん啼く', '～啼く'),
+                          ('びくともしない', '～ともしない'),
+                          ('廟堂に立つ', '～に立つ'),
+                          ('屛風倒しに倒れる', '～に倒れる'),
+                          ('ぴょこんと頭を下げる', '～頭を下げる'),
+                          ('ぴょんと跳ぶ', '～跳ぶ'),
+                          ('ぴょんぴょん跳ぶ', '～跳ぶ'),
+                          ('ぴよぴよ鳴く', '～鳴く'),
+                          ('風声鶴嗅に驚く', '～に驚く'),
+                          ('風前の灯(灯火)', '～の灯(灯火)'),
+                          ('深爪を切る', '～を切る'),
+                          ('不帰の客となる', '～の客となる'),
+                          ('不許複製', '～複製'),
+                          ('俯仰天地に愧じず(恥ずる所がない)', '～天地に愧じず, ～天地に恥ずる所がない'),
+                          ('不拘留のまま検束される', '～のまま検束される'),
+                          (', <i>напр.</i> 二千/フタセン/三百 две тысячи триста', ''),
+                          ('二桁の数', '～の数'),
+                          ('二手に別れる', '～に別れる'),
+                          ('二目と見られない[ような]', '～と見られない[ような]'),
+                          ('…に足を踏みかける', '…に足を～'),
+                          ('不問に付する', '～に付する'),
+                          ('…降りみ降らずみ雨が絶えず', '～雨が絶えず'),
+                          ('踏ん切りがつかない', '～がつかない'),
+                          ('不精髭を生やしている', '～を生やしている'),
+                          ('物質不滅の法則', '～の法則'),
+                          ('物質保存の原理', '～の原理'),
+                          ('ぶつくさ言う', '～言う'),
+                          ('炳として日月の如し', '～として日月の如し'),
+                          (
+                              ' へへ <i>брови</i>, のの <i>глаза</i>, も <i>нос</i>, へ <i>рот</i>, じ <i>овал лица)</i>',
+                              '),'),
+                          ('へへののもへじの生徒', '～の生徒'),
+                          ('へべれけに酔う', '～に酔う'),
+                          ('一臂の力を貸す', '～の力を貸す'),
+                          ('…は未だしという所がある', '…は～という所がある'),
+                          ('魚心あれば水心/ミズゴコロ/', '～あれば水心/ミズゴコロ/'),
+                          ('打出の小槌', '～の小槌'),
+                          ('売言葉に買い言葉', '～に買い言葉'),
+                          ('叡聞に達する', '～に達する'),
+                          ('鸚鵡返しに言う', '～に言う'),
+                          ('哀々禁ぜず', '～禁ぜず'),
+                          ('意気衝天の概がある', '～の概がある'),
+                          ('いたずら盛りの年頃', '～の年頃'),
+                          ('一寸試し五分試めしにする', '～五分試めしにする'),
+                          ('一桃腐りて百桃/ヒャクトウ/損ず', '一桃腐りて百桃損ず'),
+                          ('お手数ながら', '～ながら'),
+                          ('親風を吹かせる', '～を吹かせる'),
+                          ('会稽の恥をそそぐ', '～の恥をそそぐ'),
+                          ('海陸両棲の動物', '～の動物'),
+                          ('隔日発作のおこり', '～のおこり'),
+                          ('籠抜け[詐欺]を働く', '～[詐欺]を働く'),
+                          ('家庭型の女', '～の女'),
+                          ('下風に立つ', '～に立つ'),
+                          ('べそをかく', '～をかく'),
+                          ('捧刀の礼', '～の礼'),
+                          ('ほんこでめんこをする', '～でめんこをする'),
+                          ('本腹の子', '～の子'),
+                          ('忙中の閑 ', '～の閑 '),
+                          ('; <i>ср.</i> にょうぼさつ', ''),
+                          ('ぼたりと落ちた', '～と落ちた'),
+                          ('ぼちゃんと飛び込む', '～と飛び込む'),
+                          ('ぼってり太った', '～太った'),
+                          ('凡慮の及ぶ所でない', '～の及ぶ所でない'),
+                          ('前先が見えない', '～が見えない'),
+                          ('目蔭をさす', '～をさす'),
+                          ('紛う方なき', '～方/こと/なき'),
+                          ('まじまじ[と]見る', '～[と]見る'),
+                          ('末筆ながら', '～ながら'),
+                          ('まんじりともしない', '～ともしない'),
+                          ('見極めのつかぬ', '～のつかぬ'),
+                          ('右枕に寝る', '～に寝る'),
+                          ('身ぐるみはぎとられる', '～はぎとられる'),
+                          ('三桁の数', '～の数'),
+                          ('見だてがない', '～がない'),
+                          ('三つ巴の争い(混戦)', '～の争い, ～の混戦'),
+                          ('身分相応に暮らす(やって行く)', '～に暮らす, ～やって行く'),
+                          ('無可有の郷/サト/', '～の郷/サト/'),
+                          ('向かっ腹を立てる', '～を立てる'),
+                          ('無原罪の御宿/オヤド/', '～の御宿/オヤド/'),
+                          ('無駄飯を食う', '～を食う'),
+                          ('胸三寸に納める', '～に納める'),
+                          ('盲打ちに打つ', '～に打つ'),
+                          ('盲撃ちに撃つ', '～に撃つ'),
+                          ('盲判を押す', '～を押す'),
+                          ('目覚め勝ちの一夜を過ごす', '～の一夜を過ごす'),
+                          ('目潰しを食わせる, 目潰しに…を投げる', '～を食わせる, ～に…を投げる'),
+                          ('目端がきく', '～がきく'),
+                          ('めらめら燃え上がる', '～燃え上がる'),
+                          ('もうと鳴く', '～と鳴く'),
+                          ('…の話で持ち切りだった', '…の話で～だった'),
+                          ('…に身を持ち崩す', '…に身を～'),
+                          ('勿怪の幸', '～の幸'),
+                          ('本立ちのよい', '～のよい'),
+                          ('諸肌を脱ぐ(脱いでいる)', '～を脱ぐ(脱いでいる)'),
+                          ('門前雀羅を張る', '～を張る'),
+                          ('薬石効/コウ/なく', '～効/コウ/なく'),
+                          ('役人風を吹かす', '～を吹かす'),
+                          ('自暴酒をあふる', '～をあふる'),
+                          ('八又の大蛇/オロチ/', '～の大蛇/オロチ/'),
+                          ('湯気にあたる', '～にあたる'),
+                          ('夢聊 <i>с отриц.</i>', '<i>с отриц.</i>'),
+                          ('夢聊も忘れない', '～も忘れない'),
+                          ('夢枕に立つ', '～に立つ'),
+                          ('俑を作る', '～を作る'),
+                          ('様です(だ)', '～です(だ)'),
+                          ('よう[御座います]', '～[御座います]'),
+                          ('よくせきの事で', '～の事で'),
+                          ('横車を押す', '～を押す'),
+                          ('横抱きにかかえる', '～にかかえる'),
+                          ('横手を打つ', '～を打つ'),
+                          ('横飛びに飛んでゆく', '～に飛んでゆく'),
+                          ('横隣りの人', '～人'),
+                          ('横薙ぎに払う', '～に払う'),
+                          ('…由です', '…～です'),
+                          ('由ある ', '～ある '),
+                          ('由ある人', '～ある人'),
+                          ('余憤を漏らす', '～を漏らす'),
+                          ('寄辺なぎさの捨小舟/ステコブネ/', '～の捨小舟/ステコブネ/'),
+                          ('埒外に出る', '～に出る'),
+                          (
+                              '<i>(в древнем Китае:</i> 礼 <i>нормы общественного поведения</i>, 楽 <i>музыка</i>, 射 <i>стрельба из лука</i>, 御/ギョ/ <i>управление колесницей</i>, 書 <i>письмо</i>, 数 <i>счёт)</i>',
+                              '<i>(в древнем Китае: нормы общественного поведения, музыка, стрельба из лука, управление колесницей, письмо, счёт)'),
+                          ('陸路[を通って]', '～[を通って]'),
+                          ('立錐の余地もない', '～の余地もない'),
+                          ('両袖付の机', '～の机'),
+                          ('りーんと呼鈴を鳴らす', '～と呼鈴を鳴らす'),
+                          ('老残の身', '～の身'),
+                          ('論陣を張る', '～を張る'),
+                          ('論歩を進める', '～を進める'),
+                          (' (<i>ср.</i> あんか【案下】, <a href="#001-61-23">おんちゅう【御中】</a>)', ''),
+                          ('和局を結ぶ', '～を結ぶ'),
+                          ('わなわな震える', '～震える'),
+                          ('インキ止の紙', '～の紙'),
+                          ('カメラ顔のいい', '～のいい'),
+                          ('(<i>букв.</i> с отметкой «ки», <i>сокр.</i> китигаи 気違い)',
+                           '(<i>букв.</i> с отметкой «ки», <i>сокр.</i> 気違い)'),
+                          ('ジェスチャーまじりの話しぶり', '～の話しぶり'),
+                          ('(ストリキニン <i>англ.</i> strychnin, ストリキニーネ <i>голл.</i> strychnine)',
+                           '(<i>от англ.</i> strychnin, <i>голл.</i> strychnine)'),
+                          ('タイム・アップだ', '～だ'),
+                          ('てくしーで行く', '～で行く'),
+                          ('ヌーボー式の人', '～の人'),
+                          ('バベルの塔', '～の塔'),
+                          ('ビキニの灰/ハイ/', '～の灰/ハイ/'),
+                          ('フォールに持ち込む', '～に持ち込む'),
+                          ('ホーム・ルーム指導教師', '～指導教師'),
+                          ('(<i>кит.</i> мэй фацзы 没法子)', '(<i>кит.</i> 没法子 [мэй фацзы])'),
+                          (
+                              ' (<i>слово-каламбур, основанное на графическом разложении иероглифа</i> 只 тада)', ''),
+                          (
+                              ' (<i>прост. слово-каламбур — прочтённый по частям иероглиф</i> 頗, <i>см.</i> <a href="#002-34-54">すこぶる</a>)',
+                              ''),
+                          ('があがあ鳴く', '～鳴く'),
+                          ('がぶがぶ飲む', '～飲む'),
+                          ('がらんがらんと鳴る', '～と鳴る'),
+                          ('菊水の紋', '～の紋'),
+                          (
+                              ' <i>(поскольку иероглифы</i> 七十七 <i>в скорописном написании похожи на иероглиф</i> 喜, <i>написанный тоже скорописью)</i>',
+                              ''),
+                          ('鬼籍に入/ハイ/る', '～に入/ハイ/る'),
+                          ('きゃんきゃん鳴く', '～鳴く'),
+                          ('旧遊の地', '～の地'),
+                          ('狭斜の巷', '～の巷'),
+                          ('響板のエゾ', '～のエゾ'),
+                          ('器量好みの人', '～の人'),
+                          ('錦上更に花を添える', '～更に花を添える'),
+                          ('義師を起す', '～を起す'),
+                          ('ぎょっだね', '～だね'),
+                          ('苦汁をなめる', '～をなめる'),
+                          ('汲み立ての水', '～の水'),
+                          ('ぐうの音 ', '～の音/ね/ '),
+                          ('化粧くずれを直す', '～を直す'),
+                          ('欠を補う', '～を補う'),
+                          ('拳匪の乱', '～の乱'),
+                          ('げらげら笑う', '～笑う'),
+                          ('口角泡/アワ/を飛ばして', '～泡/アワ/を飛ばして'),
+                          ('哄然と笑う', '～と笑う'),
+                          ('巧遅は拙速に如/シ/かず', '巧遅は拙速に如かず'),
+                          ('口辺に微笑をたたえて', '～に微笑をたたえて'),
+                          ('小首をかしげる(傾ける, ひねる)', '～をかしげる, ～を傾ける, ～をひねる'),
+                          ('心待ちに待つ', '～に待つ'),
+                          ('滑稽交じりに話す', '～に話す'),
+                          ('<i>форма</i> なさい <i>в женской речи, см.</i> <a href="#006-93-67">なさい</a>',
+                           '<i>в женской речи</i> <i>см.</i> <a href="#006-93-67">なさい</a>'),
+                          ('両極端は相会す', '＝両極端は～す'),
+                          ('顔を赤らめる', '＝顔を～'),
+                          ('夜の明け抜けに', '＝夜の～に'),
+                          ('どうぞ悪しからず[思って下さい]', '＝どうぞ～[思って下さい]'),
+                          ('二人は熱々だ', '＝二人は～だ'),
+                          ('疑心暗鬼を生ず', '＝疑心～を生ず'),
+                          ('故人遺愛の', '＝故人～の'),
+                          ('夫婦は異身同体である', '＝夫婦は～である'),
+                          ('[打って]一丸とする', '＝[打って]～とする'),
+                          ('赤ん坊にいないいないばーをやって見る', '＝赤ん坊に～をやって見る'),
+                          (' 得意の鼻をうごめかす', ' ＝得意の鼻を～'),
+                          ('一点の打処もない', '＝一点の～もない'),
+                          ('顔を俯向ける', '＝顔を～'),
+                          ('時を得顔に振舞う', '＝時を～に振舞う'),
+                          ('そんなことがあるかしら！あるとも、あるとも大ありだ', '＝そんなことがあるかしら！あるとも、あるとも～'),
+                          ('子供のお仕置き', '＝子供の～'),
+                          ('これでおつもりだよ', '＝これで～だよ'),
+                          ('人口に膾炙する', '＝人口に～する'),
+                          ('意に介する', '＝意に～'),
+                          ('涙に掻き暮れる', '＝涙に～'),
+                          ('御加餐を祈る', '＝御～を祈る'),
+                          ('鼻をかむ', '＝鼻を～'),
+                          ('声を嗄らす', '＝声を～'),
+                          ('世は刈菰と乱れた', '＝世は～と乱れた'),
+                          ('声が嗄れる ', '＝声が～ '),
+                          ('犬の川端歩き', '＝犬の～'),
+                          ('酒の燗をする(付ける)', '＝酒の～をする(付ける)'),
+                          ('事務を簡捷にする', '＝事務を～にする'),
+                          ('生死の関頭に立つ', '＝生死の～に立つ'),
+                          ('もう堪忍袋の緒が切れた', '＝もう～の緒/お/が切れた'),
+                          ('それが聞き納めだった', '＝それが～だった'),
+                          ('妙な気先が動いて', '＝妙な～が動いて'),
+                          ('私は着た切り雀だ', '＝私は～だ'),
+                          ('万事休す', '＝万事～'),
+                          ('半/ナカバ/香落ちで指す', '＝半/ナカバ/～で指す'),
+                          ('毛の癖直しをする', '＝毛の～をする'),
+                          ('彼は糞落着きに落着いている', '＝彼は～に落着いている'),
+                          ('日が暮れなずむ', '＝日が～'),
+                          ('鹿児島くんだりへ行く', '＝鹿児島～へ行く'),
+                          ('獅子の子落とし', '＝獅子の～'),
+                          ('風邪を拗らす', '＝風邪を～'),
+                          ('家/イエ/の子郎党', '＝家/イエ/の～'),
+                          ('小刀を逆手に持つ(取る)', '＝小刀を～に持つ(取る)'),
+                          ('言うも更なり', '＝言うも～'),
+                          ('日/ヒ/既に三竿', '＝日/ヒ/既に～'),
+                          ('舌にざらつく', '＝舌に～'),
+                          ('顔を顰める', '＝顔を～'),
+                          ('身に泌み感じる', '＝身に～'),
+                          ('夜は深々と更けて行く', '＝夜は～と更けて行く'),
+                          ('その言は今もなお耳底にある', '＝その言は今もなお～にある'),
+                          ('うんともすんとも言わない не сказать', '＝うんとも～とも言わない не сказать'),
+                          ('うんともすんとも言わない не ответить', '～ともすんとも言わない не ответить'),
+                          ('面/ツラ/の皮が千枚張りだ', '＝面/ツラ/の皮が～だ'),
+                          ('模様を染め出す', '＝模様を～'),
+                          ('風がそよそよ吹く', '＝風が～吹く'),
+                          ('小便をたれる', '＝小便を～'),
+                          ('そのたんびに', '＝その～に'),
+                          ('不信任の弾劾案', '＝不信任の～'),
+                          ('お使い立てをしまして申訳ありません', '＝お～をしまして申訳ありません'),
+                          ('口を噤む', '＝口を～'),
+                          ('五日付け[の]', '＝五日～[の]'),
+                          ('権威づけの為に', '＝権威～の為に'),
+                          ('目をつぶる', '＝目を～'),
+                          ('酒を手酌で飲む', '＝酒を～で飲む'),
+                          ('『済みません』てな事を言う', '＝『済みません』～事を言う'),
+                          ('両刀を手挟む', '＝両刀を～'),
+                          ('写真を摂る', '＝写真を～'),
+                          ('最後の一周は彼の独走の観があった', '＝最後の一周は彼の～の観があった'),
+                          ('二十円ドタを割る', '＝二十円～を割る'),
+                          ('目を泣き潰す', '＝目を～'),
+                          ('事も無げ', '＝事も～'),
+                          ('思案の投げ首', '＝思案の～'),
+                          ('髪をなで付けにする', '＝髪を～にする'),
+                          ('怒ったのなんのって', '＝怒ったの～'),
+                          ('犬の逃げ吠え', '＝犬の～'),
+                          ('たけのこのようににょきにょき出ている', '＝たけのこのように～出ている'),
+                          ('烏の濡羽色', '＝烏の～'),
+                          ('一人乗りの', '＝一人～の'),
+                          ('鯛の浜焼', '＝鯛の～'),
+                          ('涙をふるって馬謖を斬る', '＝涙をふるって～を斬る'),
+                          ('眼をぱちくりさせる', '＝眼/め/を～させる'),
+                          ('夜の引き明けに', '＝夜の～に'),
+                          ('贔屓の引き倒し', '＝贔屓の～'),
+                          ('お膝繰りを願います', '＝お～を願います'),
+                          ('ざっと(急いで)一風呂浴びる', '＝急いで(ざっと)～浴びる'),
+                          ('屁を放る', '＝屁を～'),
+                          ('水の中をびちゃびちゃ歩く', '＝水の中を～歩く'),
+                          ('風がびゅうびゅう吹く', '＝風が～吹く'),
+                          ('タバコを吹かす курить', '＝タバコを～ курить'),
+                          ('夜/ヨル/を更かす', '＝夜を～'),
+                          ('風の吹き回し', '＝風の～'),
+                          ('裏面に伏在する', '＝裏面に～する'),
+                          ('足を踏み入れる', '＝足を～'),
+                          ('[足の]踏み所もない', '＝[足の]～もない'),
+                          ('[足を]踏み外ずす', '＝[足を]～'),
+                          ('気がふれる', '＝気が～'),
+                          ('…の便をはかって', '…の～をはかって'),
+                          ('用が便じる', '＝用が～'),
+                          ('どうぞ御放念下さいますよう', '＝どうぞ御～下さいますよう'),
+                          ('御母堂', '＝御～'),
+                          ('帽子を目深に被る', '＝帽子を～に被る'),
+                          ('鰯の味醂干し', '＝鰯の～'),
+                          ('人にめいめい向き向きある', '＝人にめいめい～ある'),
+                          ('あの店は儲け主義だ', '＝あの店は～だ'),
+                          ('煙がもくもく[と]出る', '＝煙が～[と]出る'),
+                          (' 気の持ちよう', ' ＝気の～'),
+                          ('袴の股立ちを高くとる', '＝袴の～を高くとる'),
+                          ('八幡の藪知らず', '＝八幡/やわた/の～'),
+                          ('髪の結い方', '＝髪の～'),
+                          ('あの男は何事も行き当たりばったり主義だ', '＝あの男は何事も～だ'),
+                          ('この本は読み出がない', '＝この本は～がない'),
+                          ('人間は万物の霊長', '＝人間は万物～'),
+                          ('彼は笑い上戸だ', '＝彼は～だ'),
+                          ('彼は悪口屋だ', '＝彼は～だ'),
+                          ('彼は悪擦れしている', '＝彼は～している'),
+                          ('(<i>отриц. форма гл.</i> <a href="#006-14-76">しく【如く】</a>) ', ''),
+                          ('大所高所から物を見る', '～から物を見る'),
+                          ('<i>связ. кн. отриц. форма гл.</i>', '<i>кн. отриц. форма гл.</i>'),
+                          ('(<i>с 1949 г., ср.</i> <a href="#007-97-88">ていだい【帝大】</a>)',
+                           '(<i>с 1949 г.</i>)'),
+                          ('夜が明け離れた', '＝夜が｜た～'),
+                          ('捏ね交ぜて一つにした', '｜て～一つにした'),
+                          ('身を挺して', '＝身を｜して～'),
+                          ('取って付けた様な', '｜た～様な'),
+                          ('…は両眼を泣き腫らしていた', '…は両眼を｜して～いた'),
+                          ('…は記憶から拭い去られた', '…は記憶から｜られた～'),
+                          ('羽/ハネ/の生え揃った', '＝羽/ハネ/の｜った～'),
+                          ('罷り間違えば, 罷り間違っても', '｜えば～, ｜って～も'),
+                          ('目に物見せてやる', '＝目に｜て～やる'),
+                          ('<i>от</i> <a href="#001-55-99">ベースI 1</a> <i>и англ.</i> up',
+                           '<i>от</i> ベース <i>и англ.</i> up'),
+                          ('(<i>от</i> ごねる <i>и</i> 得 току)', '(<i>от</i> ごねる <i>и</i> 得)'),
+                          ('(<i>от сокр.</i> мосурин モスリン)', '(<i>от сокр.</i> モスリン)'),
+                          ('<i>связ.:</i> お待ち遠様/オマチドウサマ/[でした]',
+                           '<i>связ.:</i> omachidousama 【お待ち遠様】 [deshita]'),
+                          (
+                              '<i>побуд. залог гл.</i> つく【尽く】, <i>т. е. письменной формы гл.</i> <a href="#008-04-11">つきる</a>;',
+                              '<i>побуд. залог гл.</i> <a href="#003-19-230">つく</a>'),
+                          ('(<i>редко</i> 供わる) (<i>о себе тк.</i> 具わる)\n: …が～',
+                           '(<i>о себе тк.</i> 具わる) (<i>редко</i> 供わる) …が～'),
+                          ('…を記録に残す, …の記録をとる <i>см. выше</i> ～する;', 'を記録に残す, の記録をとる <i>см. выше</i> する'),
+                          ('(<i>в конце предл. после</i> かも)', '…かも～ <i>в конце предл.</i>'),
+                          ('(<i>как 2-й компонент сложн. сл.</i> ざいく) [мелкие] изделия, поделки;', 'ざいく'),
+                          (' (<i>напр.</i> кударидзака <i>вм.</i> кударисака)', ''),
+                          (
+                              '2) как и следовало ожидать (<i>неправ. вм.</i> <a href="#000-83-01">かぜん【果然】</a>).',
+                              '2) <i>неправ.</i> как и следовало ожидать.'),
+                          ('(<i>вм.</i> 言わざる) ', ''),
+                          ('(<i>вм.</i> 聞かざる) ', ''),
+                          ('(<i>вм.</i> 見ざる) ', ''),
+                          ('～の <i>см.</i> <a href="#003-79-98">かいせんじょう(～の)</a>.',
+                           '～の <i>см.</i> <a href="#003-79-98">かいせんじょう(～[の])</a>.'),
+                          ('～にする <i>см.</i> <a href="#003-80-49">こ【粉】(～にする)</a>.',
+                           '～にする <i>см.</i> <a href="#003-80-49">こ【粉】(～にする)</a>.'),
+                          ('粉にする(ひく) растирать в порошок; перемалывать на муку; толочь, молоть;',
+                           '～にする, ～にひく растирать в порошок; перемалывать на муку; толочь, молоть;'),
+                          ('<i>см.</i> <a href="#008-81-40">しりごみ (～する)</a>.',
+                           '<i>см.</i> <a href="#008-81-40">しりごみ (～[を]する)</a>.'),
+                          ('～[の] <i>см.</i> <a href="#003-36-07">じもと (～の)</a>.',
+                           '～[の] <i>см.</i> <a href="#003-36-07">じもと (～[の])</a>.'),
+                          ('ぶっ違いに置く', '～に置く'),
+                          ('頰を火照らす <i>см.</i> <a href="#002-55-30">ほてる(頰が火照る)</a>;',
+                           '＝頰を～ <i>см.</i> <a href="#002-55-30">ほてる(＝頰が～)</a>;'),
+                          ('頰がほてる щёки пылают, лицо залила краска;',
+                           '＝頰が～ щёки пылают, лицо залила краска;'),
+                          ('<i>прост. что-л. рассчитанное на дешёвый эффект</i>;',
+                           '<i>прост.</i> что-л. рассчитанное на дешёвый эффект;'),
+                          ('<i>кн. заставлять быть таким:</i>',
+                           '<i>кн.</i> заставлять быть таким:'),
+                          ('<i>ономат. звук кипящего масла (при жаренье)</i>;',
+                           '<i>ономат.</i> звук кипящего масла (при жаренье);'),
+                          ('<i>ономат. отрывистый звук хлопушки и т. п.</i>;',
+                           '<i>ономат.</i> отрывистый звук <i>хлопушки и т. п.</i>;'),
+                          ('旅慣れた', '｜た～'),
+                          ('旅慣れない', '｜ない～'),
+                          ('1) <i>ономат. о выстреле, стуке или ударе обо что-л.</i>;',
+                           '1) <i>ономат.</i> о выстреле, стуке или ударе <i>обо что-л.</i>;'),
+                          ('<i>после сущ. подчёркивающая частица:</i>',
+                           '<i>после сущ.</i> подчёркивающая частица:'),
+                          ('待ち切れない', '｜れない～'),
+                          ('足掻きがとれない', '～がとれない'),
+                          ('胡座をかく', '～をかく'),
+                          ('呆気に取られる', '～に取られる'),
+                          ('口をあんぐりあいて', '＝口を～あいて'),
+                          ('生き馬の目を抜く[ような事をする]', '～の目を抜く[ような事をする]'),
+                          ('一縷の煙', '～の煙'),
+                          ('一縷の命', '～の命'),
+                          ('一縷の望みを抱く', '～の望みを抱く'),
+                          ('一掬の水', '～の水'),
+                          ('一掬の涙なきを得ない', '～のなきを得ない'),
+                          ('一挙手一投足の労/ロウ/', '～の労/ロウ/'),
+                          ('一挙手一投足に過ぎない', '～に過ぎない'),
+                          ('一再ならず', '～ならず'),
+                          ('いっそ[のこと]', '～[のこと]'),
+                          ('命冥加が尽きた', '～が尽きた'),
+                          ('命冥加な奴だ', '～な奴だ'),
+                          ('うんうん言っている', '～言っている'),
+                          ('江戸前の魚', '～の魚'),
+                          ('江戸前の料理', '～の料理'),
+                          ('王手飛車を食う', '～を食う'),
+                          ('王手飛車に掛ける', '～に掛ける'),
+                          ('臆面もない', '～もない'),
+                          ('烏滸の沙汰/サタ/', '～の沙汰/サタ/'),
+                          ('心を落ち着けて', '＝心を｜て～'),
+                          ('お目にかかる', '～にかかる'),
+                          ('お目にかける', '～にかける'),
+                          ('…のお目に止まる', '…の～に止まる'),
+                          ('思い半ばに過ぎぬ', '～に過ぎぬ'),
+                          ('思う壷に嵌る', '～に嵌る'),
+                          ('開巻第一に', '～第一に'),
+                          ('回天の偉業(事業)', '～の偉業(事業)'),
+                          ('回天の力', '～の力'),
+                          ('固唾を飲む', '～を飲む'),
+                          ('かちんと鳴る', '～と鳴る'),
+                          ('かちんかちん', '～かちん'),
+                          ('紙一重である', '～である'),
+                          ('からっと晴れ上がる', '～晴れ上がる'),
+                          ('からっと揚げる', '～揚げる'),
+                          ('かんかん鳴る', '～鳴る'),
+                          ('かんかん日が照っている', '～日が照っている'),
+                          ('かんかんに怒る', '～に怒る'),
+                          ('三学年生', '＝三～'),
+                          ('がちゃがちゃいう音', '～いう音'),
+                          ('がちゃがちゃさせる(音を立てる)', '～させる, ～音を立てる'),
+                          ('がぶりと飲み込む', '～と飲み込む'),
+                          ('がぶりと嚙み付く', '～と嚙み付く'),
+                          ('がやがや騒ぐ', '～騒ぐ'),
+                          ('がらがらいう音', '～いう音'),
+                          ('がらがらと音がする', '～と音がする'),
+                          ('がりがり音を立てる', '～音を立てる'),
+                          ('がりがり嚙む', '～嚙む'),
+                          ('がんがん鳴る(鳴らす)', '～鳴る, ～鳴らす'),
+                          ('喜の字', '～の字'),
+                          ('喜の祝', '～の祝'),
+                          ('機影を現わす', '～を現わす'),
+                          ('機影を没する', '～を没する'),
+                          ('気位が高い', '～が高い'),
+                          ('気随気儘な', '～気儘な'),
+                          ('きちきちに詰まっている', '～に詰まっている'),
+                          ('時間きちきちに', '＝時間～に'),
+                          ('気骨が折れる', '～が折れる'),
+                          ('気骨の折れる', '～の折れる'),
+                          ('きーきーいう音', '～いう音'),
+                          ('きーきー鳴く', '～鳴く'),
+                          ('ぎゃふんと言わせる', '～言わせる'),
+                          ('ぎゃふんと言う(参る)', '～言う, ～参る'),
+                          ('ぎゅうぎゅう鳴る', '～鳴る'),
+                          ('ぎゅうぎゅう鳴る音', '～鳴る音'),
+                          ('ぎゅーと言う音', '～と言う音'),
+                          ('ぎゅーと開く', '～と開く'),
+                          ('ぎょろぎょろ見る', '～見る'),
+                          ('くすくす笑う', '～笑う'),
+                          ('くたくた疲れる', '～疲れる'),
+                          ('汗でカラーがくたくたになった', '＝汗でカラーが～になった'),
+                          ('くたくた煮る', '～煮る'),
+                          ('口占で見る', '～で見る'),
+                          ('口幅ったい事を言う', '～事を言う'),
+                          ('くつくつ笑う', '～笑う'),
+                          ('目がくらくらする', '＝目が～する'),
+                          ('くらくら煮え立つ', '～煮え立つ'),
+                          ('暮れ残る空の色', '～空の色'),
+                          ('暮れ残る白百合/シラユリ/', '～白百合/シラユリ/'),
+                          ('くんくんと泣く', '～と泣く'),
+                          ('くんくん嗅ぐ', '～嗅ぐ'),
+                          ('ぐいっと飲む', '～飲む'),
+                          ('ぐいと引く', '～引く'),
+                          ('ぐうぐう寝る', '～寝る'),
+                          ('腹がぐうぐう鳴る', '＝腹が～鳴る'),
+                          ('ぐうの音も出ない', '～も出ない'),
+                          ('ぐるぐる回る', '～回る'),
+                          ('ぐるぐる巻く(巻きにする)', '～巻く, ～巻きにする'),
+                          ('けりが付く', '～が付く'),
+                          ('鳧を付ける', '～を付ける'),
+                          ('乾坤一擲の勝負をやる', '～の勝負をやる'),
+                          ('玄関払いを食わす', '～を食わす'),
+                          ('玄関払いを食わさせる', '～を食わさせる'),
+                          ('好学の念', '～の念'),
+                          ('好学の士', '～の士'),
+                          ('浩然の気', '～の気'),
+                          ('浩然の気を養う', '～の気を養う'),
+                          ('孤高の生活', '～の生活'),
+                          ('孤高を持/ジ/す', '～を持/ジ/す'),
+                          ('…するを快しとする', '…するを～とする'),
+                          ('…するを快しとしない', '…するを～としない'),
+                          ('ころころ転げる', '～転げる'),
+                          ('あの人はころころとふとっている', '＝あの人は～とふとっている'),
+                          ('ころころと鳴く', '～と鳴く'),
+                          ('狐がこんこんと鳴く', '＝狐が～と鳴く'),
+                          ('こんこんと咳をする', '～と咳をする'),
+                          ('こんこんと打つ', '～と打つ'),
+                          ('雪がこんこんと降る', '＝雪が～と降る'),
+                          ('滾々と流れる', '～と流れる'),
+                          ('滾々として尽きない', '～として尽きない'),
+                          ('ごうと通る', '～と通る'),
+                          ('ごうという彼の音', '～という彼の音'),
+                          ('轟々という音', '～という音'),
+                          ('轟々と鳴る', '～と鳴る'),
+                          ('呉下の阿蒙/アモウ/である', '～の阿蒙/アモウ/である'),
+                          ('ごぼごぼいう音', '～いう音'),
+                          ('ごぼごぼ音がする', '～音がする'),
+                          ('目を覚ます', '＝目を～'),
+                          ('酔いを醒ます', '＝酔いを～'),
+                          ('迷い(迷夢)を醒ます', '＝迷い(迷夢)を～'),
+                          ('[目が]覚める', '＝[目が]～'),
+                          ('目のさめるような美人', '＝目の～ような美人'),
+                          ('酔いが醒める', '＝酔いが～'),
+                          ('ざくざく音がする', '～音がする'),
+                          ('砂をざくざく踏む', '＝砂を～踏む'),
+                          ('ざーざー降りの雨', '～降りの雨'),
+                          ('ざーざー流れる', '～流れる'),
+                          ('四季折々の花', '～の花'),
+                          ('四季折々の眺めがある', '～の眺めがある'),
+                          ('しくしく泣く', '～泣く'),
+                          ('腹がしくしく痛む', '＝腹が～痛む'),
+                          ('死出の旅', '～の旅'),
+                          ('死出の山', '～の山'),
+                          ('芝居道の人々', '～の人々'),
+                          ('芝居道に入/ハイ/る', '～に入/ハイ/る'),
+                          ('…を斜に構える', '…を～に構える'),
+                          ('体を斜に構える', '＝体を～に構える'),
+                          ('衆口一致して', '～一致して'),
+                          ('手裏に掌握する', '～に掌握する'),
+                          ('手裏を脱する', '～を脱する'),
+                          ('しゅーと言う音', '～と言う音'),
+                          ('しゅーしゅーいう', '～いう'),
+                          ('性懲りもなく', '～もなく'),
+                          ('神も照覧あれ', '＝神も～あれ'),
+                          ('雨がしょぼしょぼ降る', '＝雨が～降る'),
+                          ('しょぼしょぼに濡れる', '～に濡れる'),
+                          ('しょぼしょぼした目', '～した目'),
+                          ('目をしょぼしょぼさせる', '＝目を～させる'),
+                          ('しょぼしょぼした髯', '～した髯'),
+                          ('十目の見る所', '～の見る所'),
+                          ('上聞に入れる', '～に入れる'),
+                          ('上聞に達する', '～に達する'),
+                          ('すかを食わす', '～を食わす'),
+                          ('すかを食う', '～を食う'),
+                          ('足を滑らす', '＝足を～'),
+                          ('口をすべらした', '＝口を｜した～'),
+                          ('専門外の人', '～の人'),
+                          ('それは専門外だ', '＝それは～だ'),
+                          ('千慮の一失', '～の一失'),
+                          ('ぜいぜい言う', '～言う'),
+                          ('蘇張の弁/ベン/', '～の弁/ベン/'),
+                          ('蘇張の弁を振う', '～の弁を振う'),
+                          ('蒼茫たる大海', '～たる大海'),
+                          ('蒼茫と暮れて行く', '～と暮れて行く'),
+                          ('俎上の魚', '～の魚'),
+                          ('俎上に載せる', '～に載せる'),
+                          ('俎上に置く(載せる)', '～に置く, ～に載せる'),
+                          ('耳を欹てる', '＝耳を～'),
+                          ('目を欹てる', '＝目を～'),
+                          ('側杖を食う', '～を食う'),
+                          ('側杖を食って殺される', '～を食って殺される'),
+                          ('あぶないぞ！', '＝あぶない～！'),
+                          ('誰ぞ来たのか？', '＝誰～来たのか？'),
+                          ('ぞっきに出す', '～に出す'),
+                          ('ぞっきで売る', '～で売る'),
+                          ('大過なきに近い', '～に近い'),
+                          ('大過無きを得/エ/る', '～を得/エ/る'),
+                          ('高砂のじいさんとばあさん', '～じいさんとばあさん'),
+                          ('高砂の松', '～の松'),
+                          ('高枕で寝る', '～で寝る'),
+                          ('世間知らずの高枕', '＝世間知らずの～'),
+                          ('お互っこだ', '＝お～だ'),
+                          ('他見を憚る', '～を憚る'),
+                          ('他見を許さない', '～を許さない'),
+                          ('多情多恨の一生を送る', '～の一生を送る'),
+                          ('多情多恨の志士', '～の志士'),
+                          ('立て付けが良い', '～が良い'),
+                          ('立て付けの悪い戸', '～の悪い戸'),
+                          ('他聞を憚る', '～を憚る'),
+                          ('上から水がたらたら落ちる', '＝上から水が～落ちる'),
+                          ('汗をたらたら流している', '＝汗を～流している'),
+                          ('駄法螺を吹く', '～を吹く'),
+                          ('断金の友', '～の友'),
+                          ('断金の交り(契り)', '～の交り(契り)'),
+                          ('ちくりと刺す', '～と刺す'),
+                          ('ちくりと痛む', '～と痛む'),
+                          ('ちちと啼く', '～と啼く'),
+                          ('ちびりちびり飲む', '～飲む'),
+                          ('ちゅーちゅー鳴く', '～鳴く'),
+                          ('無用の長物', '＝無用の～'),
+                          ('無用の長物視する', '＝無用の～視する'),
+                          ('ちょきちょきはさみ切る', '～はさみ切る'),
+                          ('ちょきん切る', '～切る'),
+                          ('ちょきんと立つ', '～と立つ'),
+                          ('犬がちんちんをする', '＝犬が～をする'),
+                          ('月回りがいい', '～がいい'),
+                          ('今月は月回りが悪い', '＝今月は～が悪い'),
+                          ('息をつく', '＝息を～'),
+                          ('嘘を吐く', '＝嘘を～'),
+                          ('つべこべ喋べる', '～喋べる'),
+                          ('つべこべ返答する', '～返答する'),
+                          ('つべこべ云わずに', '～云わずに'),
+                          ('つべこべ言うな', '～言うな'),
+                          ('茶の出殻', '＝茶の～'),
+                          ('繭の出殻', '＝繭の～'),
+                          ('飛び抜けて一番になる', '～一番になる'),
+                          ('飛び抜けて一着', '～一着'),
+                          ('途方に暮れる', '～に暮れる'),
+                          ('途方に暮れさせる', '～に暮れさせる'),
+                          ('途方もない', '～もない'),
+                          ('同窓[の友]', '～[の友]'),
+                          ('どうのこうの言わずに', '～言わずに'),
+                          ('どうのこうの言って承諾しない', '～言って承諾しない'),
+                          ('どかっと腰を下ろす', '～腰を下ろす'),
+                          ('相場がどかっと下がった', '＝相場が～下がった'),
+                          ('胸をどきんと衝く', '＝胸を～衝く'),
+                          ('…の度胆を抜く', '…の～を抜く'),
+                          ('度胆を抜かれる', '～を抜かれる'),
+                          ('呑舟の魚', '～の魚'),
+                          ('呑舟の魚を漏らす', '～の魚を漏らす'),
+                          ('何食わぬ顔で(顔をして)', '～顔で, ～顔をして'),
+                          ('何食わぬ顔をする', '～顔をする'),
+                          ('波間に漂う', '～に漂う'),
+                          ('波間をかいくぐる', '～をかいくぐる'),
+                          ('二進も三進も行かない', '～行かない'),
+                          ('二進も三進も動けない', '～動けない'),
+                          ('二の句が継げない', '～が継げない'),
+                          ('二の句を継げなくする', '～を継げなくする'),
+                          ('ここは寝心地がよい', '＝ここは～がよい'),
+                          ('寝心地のよい床', '～のよい床'),
+                          ('穿き心地の良い靴', '～の良い靴'),
+                          ('八分の一', '～の一'),
+                          ('はっしと切りつける', '～切りつける'),
+                          ('打込む刀をはっしと受け止める', '＝打込む刀を～受け止める'),
+                          ('お話中', '＝お～'),
+                          ('お話中ですか', '＝お～ですか'),
+                          ('お話中失礼ですが', '＝お～失礼ですが'),
+                          ('どうも憚りさま', '＝どうも～'),
+                          ('憚りさまですが', '～ですが'),
+                          ('空に憚る', '＝空に～'),
+                          ('大角[の笛]', '～[の笛]'),
+                          ('大角を吹く', '～を吹く'),
+                          ('反間の策', '～の策'),
+                          ('反間苦肉の計', '～苦肉の計'),
+                          ('敵軍に反間を放つ', '＝敵軍に～を放つ'),
+                          ('はーはー言う', '～言う'),
+                          ('息をきらしてはーはーいう', '＝息をきらして～いう'),
+                          ('場数を踏む', '～を踏む'),
+                          ('縛の縄', '～の縄'),
+                          ('縛につく', '～につく'),
+                          ('莫逆の友', '～の友'),
+                          ('莫逆の交わり', '～の交わり'),
+                          ('いくら言っても馬耳東風だ', '＝いくら言っても～だ'),
+                          ('馬耳東風に聞き流す', '～に聞き流す'),
+                          ('ばちゃんとドアを締める', '～[と]ドアを締める'),
+                          ('水にばちゃんと落ちる', '＝水に～[と]落ちる'),
+                          ('ばつを合わせる', '～を合わせる'),
+                          ('ばつが悪い', '～が悪い'),
+                          ('ばらばら撒く', '～撒く'),
+                          ('ばらばら降る', '～降る'),
+                          ('ばりばり引っ掻く', '～引っ掻く'),
+                          ('ばりばり嚙む', '～嚙む'),
+                          ('仕事をばりばりやる', '＝仕事を～やる'),
+                          ('万芸に通じている人', '～に通じている人'),
+                          ('万芸に通じて一芸を成/ナ/さない', '万芸に通じて一芸を成さない'),
+                          ('万丈の気焰を上げる', '～の気焰を上げる'),
+                          ('波瀾万丈だった時代', '＝波瀾～だった時代'),
+                          ('万乗の位に上がる', '～の位に上がる'),
+                          ('万乗の君/キミ/', '～の君/キミ/'),
+                          ('口をぱくぱくさせる', '＝口を～させる'),
+                          ('ぱくぱく食べる', '～食べる'),
+                          ('タバコをぱくぱく吹かす', '＝タバコを～吹かす'),
+                          ('口をぱくりと開いて', '＝口を～と開いて'),
+                          ('ぱくりと食べる', '～と食べる'),
+                          ('帆が風にぱたぱたする', '＝帆が風に～する'),
+                          ('翼をぱたぱたする', '＝翼を～する'),
+                          ('雨のぱたぱたいう音がする', '＝雨の～いう音がする'),
+                          ('ほこりをぱたぱた払う', '＝ほこりを～払う'),
+                          ('ぱちっと音がする', '～音がする'),
+                          ('ぱちっと打つ', '～打つ'),
+                          ('指でぱちっとはじく', '＝指で～はじく'),
+                          ('小銃のぱちぱち言う音', '＝小銃の～言う音'),
+                          ('手をぱちぱち叩く', '＝手を～叩く'),
+                          ('目をぱちぱちさせる', '＝目を～させる'),
+                          ('ぱっくり嚙みつく', '～嚙みつく'),
+                          ('ぱっちりした目', '～した目'),
+                          ('目をぱっちりあける', '＝目を～あける'),
+                          ('刀をぱっちりさやに納める', '＝刀を～さやに納める'),
+                          ('ぱっぱとタバコを吹かす', '～タバコを吹かす'),
+                          ('ぱらぱら雨', '～雨'),
+                          ('木の葉がぱらぱら散った', '＝木の葉が～散った'),
+                          ('日当たりの好い', '～の好い'),
+                          ('この部屋は日当たりが悪い', '＝この部屋は～が悪い'),
+                          ('左褄を取る', '～を取る'),
+                          ('左褄を取った女', '～を取った女'),
+                          ('人払いをする', '～をする'),
+                          ('人払いを命ずる', '～を命ずる'),
+                          ('人払いを願う', '～を願う'),
+                          ('火持ちが好い', '～が好い'),
+                          ('火持ちが悪い', '～が悪い'),
+                          ('ひゅーひゅー鳴る', '～鳴る'),
+                          ('ひゅーひゅー鳴る音', '～鳴る音'),
+                          ('びしゃりと打つ', '～打つ'),
+                          ('びしゃりと本を閉じる', '～本を閉じる'),
+                          ('雨がびしょびしょ降る', '＝雨が～降る'),
+                          ('びしょびしょに濡れる', '～に濡れる'),
+                          ('びっしょり汗をかく', '～汗をかく'),
+                          ('シャツが汗でびっしょりだ', '＝シャツが汗で～だ'),
+                          ('びりびり裂く', '～裂く'),
+                          ('縫目をびりびり解く', '＝縫目を～解く'),
+                          ('びりびりと震動する', '～と震動する'),
+                          ('電撃をびりびりと感じる', '電撃を～と感じる'),
+                          ('鬢太を張る', '～を張る'),
+                          ('往復びんたを張る', '＝往復～を張る'),
+                          ('ぴくぴく動く', '～動く'),
+                          ('顔をぴくぴくさせる', '＝顔を～させる'),
+                          ('ぴしっと石を打つ', '～石を打つ'),
+                          ('ぴしっとむちで打つ', '～むちで打つ'),
+                          ('不倶戴天の仇/アダ/', '～の仇/アダ/'),
+                          ('不倶戴天の恨みをいだく', '～の恨みをいだく'),
+                          ('不即不離の態度を持する(執る)', '～の態度を持する(執る)'),
+                          ('不即不離の間柄になる', '～の間柄になる'),
+                          ('ふっつり思い切る', '～思い切る'),
+                          ('…とふっつりと手を切る', '…と～と手を切る'),
+                          ('ふにゃふにゃ言う', '～言う'),
+                          ('柔かくてふにゃふにゃしている', '＝柔かくて～している'),
+                          ('…は頭がふらふらする', '…は頭が～する'),
+                          ('…は足がふらふらする', '…は足が～する'),
+                          ('ふらふら立ち上がる', '～立ち上がる'),
+                          ('降り通しの雨', '～の雨'),
+                          ('降り通しに降る', '～に降る'),
+                          ('鼻をふんふん鳴らす', '＝鼻を～鳴らす'),
+                          ('ふんふん嗅ぐ', '～嗅ぐ'),
+                          ('香気芬芬たり', '＝香気～たり'),
+                          ('臭気芬々鼻をつく', '＝臭気～鼻をつく'),
+                          ('ぶうぶう鳴る', '～鳴る'),
+                          ('ぶうぶう言う', '～言う'),
+                          ('武運つたなく死ぬ', '～つたなく死ぬ'),
+                          ('ぶつぶつ云う', '～云う'),
+                          ('ぶつぶつ云う人', '～云う人'),
+                          ('ぶつぶつ煮える', '～煮える'),
+                          ('ぶんぶん言う', '～言う'),
+                          ('兵馬倥傯の間に', '～の間に'),
+                          ('兵馬倥傯の間に馳駆する', '～の間に馳駆する'),
+                          ('翩々たる小才子', '～たる小才子'),
+                          ('翩々として風に翻る', '～として風に翻る'),
+                          ('べたりと坐る', '～と坐る'),
+                          ('べたりとつく', '～とつく'),
+                          ('お腹がぺこぺこだ', '＝お腹が～だ'),
+                          ('ぺこんとお辞儀をする', '～お辞儀をする'),
+                          ('ぺこんと凹む', '～と凹む'),
+                          ('ぺたんと坐る', '～坐る'),
+                          ('切手をぺたんと張る', '＝切手を～張る'),
+                          ('ぺろりとなめる', '～となめる'),
+                          ('ぺろりと舌を出す', '～と舌を出す'),
+                          ('ぺろりと食べる(平らげる)', '～と食べる, ～と平らげる'),
+                          ('奉公振りがよい', '～がよい'),
+                          ('奉公振りが悪い', '～が悪い'),
+                          ('したい放題に', '＝したい～に'),
+                          ('食い放題に食う', '＝食い～に食う'),
+                          ('言いたい放題のことを言う', '＝言いたい～のことを言う'),
+                          ('這々の体/テイ/で', '～の体/テイ/で'),
+                          # contents = contents.replace('這々の体で引退る', '～の体で引退る'),
+                          ('頰を火照らす', '＝頰を～'),
+                          ('顔をほてらして', '＝顔を｜して～'),
+                          ('まっかに顔をほてらせて', '＝まっかに顔を｜せて～'),
+                          ('頰が火照る', '＝頰が～'),
+                          ('頰がほてる', '＝頰が～'),
+                          ('体中がほてっていた', '＝体中が｜って～いた'),
+                          ('ほやりと笑う', '～笑う'),
+                          ('洞が峠に陣取る', '～に陣取る'),
+                          ('洞が峠を下がる', '～を下がる'),
+                          ('暴虎慿河の勇', '～の勇'),
+                          ('暴虎慿河の徒', '～の徒'),
+                          ('ぼこぼこ音がする', '～音がする'),
+                          ('ぼこぼこ湧き出る', '～湧き出る'),
+                          ('ぼりぼり噛る', '～噛る'),
+                          ('ぼりぼり掻く', '～掻く'),
+                          ('ぼろくそに言う', '～に言う'),
+                          ('本を傍にぽいと投げる', '＝本を傍に～投げる'),
+                          ('ぽいと跳ぶ', '～跳ぶ'),
+                          ('ぽかりとなぐる', '～となぐる'),
+                          ('ぽかりと明く', '～と明く'),
+                          ('指の節をぽきぽき鳴らす', '＝指の節を～鳴らす'),
+                          ('ぽたり落ちる', '～落ちる'),
+                          ('ぽたり滴る', '～滴る'),
+                          ('汽車がぽっぽと煙を吐きながら停車場を出た',
+                           '＝汽車が～煙を吐きながら停車場を出た'),
+                          ('ぽっぽと湯気の出ているホット', '～湯気の出ているホット'),
+                          ('ぽつりと一粒雨があたった', '～と一粒雨があたった'),
+                          ('ぽつりと星が一つ残っている', '～と星が一つ残っている'),
+                          ('ぽりぽり食べる', '～食べる'),
+                          ('ぽりぽり爪で…をひっかく', '～爪で…をひっかく'),
+                          ('涙をぽろぽろこぼす', '＝涙を～こぼす'),
+                          ('ぽろぽろ砕ける', '～砕ける'),
+                          ('ぽんとコルクを抜く', '～とコルクを抜く'),
+                          ('ぽんと肩を叩く', '～と肩を叩く'),
+                          ('ぽんと投げてやる', '～と投げてやる'),
+                          ('ぽんと断る', '～と断る'),
+                          ('ぽんぽん花火が上がった', '～花火が上がった'),
+                          ('ぽんぽん手を鳴らす', '～手を鳴らす'),
+                          ('ぽんぽん怒る', '～怒る'),
+                          ('ぽーぽー鳴く', '～鳴く'),
+                          ('ぽーぽー鳴る', '～鳴る'),
+                          ('魔が差した', '～が差した'),
+                          ('魔の海', '～の海'),
+                          ('魔の手', '～の手'),
+                          ('魔をよける', '～をよける'),
+                          ('目が眩う', '＝目が～'),
+                          ('待ちぼけを食う', '～を食う'),
+                          ('丸々と太った', '～太った'),
+                          ('丸々と肥えている', '～肥えている'),
+                          ('万分の一', '～の一'),
+                          ('それは耳新らしい事ではない', '＝それは～事ではない'),
+                          ('何か耳新らしい事があるか', '＝何か～事があるか'),
+                          ('弥陀/ミダ/の名号', '＝弥陀/ミダ/の～'),
+                          ('六字の名号', '＝六字の～'),
+                          ('むっくり起き上がる', '～起き上がる'),
+                          ('むっくり肥えた', '～肥えた'),
+                          ('むにゃむにゃ言う', '～言う'),
+                          ('…しようという気がむらむら[と]起る',
+                           '…しようという気が～[と]起る'),
+                          ('煙がむらむら立ち上がる', '＝煙が～立ち上がる'),
+                          ('病人の熱気でむんむんする', '＝病人の熱気で～する'),
+                          (
+                              '[気が]めいる быть в подавленном настроении, прийти в уныние, пасть духом;\n気がめいって с тяжёлым сердцем;',
+                              '[気が]めいる быть в подавленном настроении, прийти в уныние, пасть духом;\n＝気が｜って～ с тяжёлым сердцем;'),
+                          ('[気が]めいる', '＝[気が]～'),
+                          ('目八分に捧げる', '～に捧げる'),
+                          ('目八分に…を見る', '～に…を見る'),
+                          ('めりめりいう', '～いう'),
+                          ('めりめり音がして倒れる', '～音がして倒れる'),
+                          ('もぐもぐ[と]云う, 口をもぐもぐさせる',
+                           '～[と]云う, ＝口を～させる'),
+                          ('もぐもぐ嚙む', '～嚙む'),
+                          ('もぐもぐ[と]動く', '～[と]動く'),
+                          ('勿体をつける', '～をつける'),
+                          ('物心が付く', '～が付く'),
+                          ('物心付いて以来', '～付いて以来'),
+                          ('物心のつかない内に', '～のつかない内に'),
+                          ('門前払いを食わす', '～を食わす'),
+                          ('門前払いを食う', '～を食う'),
+                          ('動ともすれば, 動もすると', '～すれば, ～すると'),
+                          ('動ともすれば…する', '～すれば…する'),
+                          ('行きずりの人', '～の人'),
+                          ('行きずりの縁/エン/', '～の縁/エン/'),
+                          ('そんなことはないよ', '＝そんなことはない～'),
+                          ('頼むよ', '＝頼む～'),
+                          ('横槍を入れる', '～を入れる'),
+                          ('横槍が出た', '～が出た'),
+                          ('夜目の利く', '～の利く'),
+                          ('夜目ではっきりとしない', '～ではっきりとしない'),
+                          ('◇夜目遠目/トウメ/傘の中/ウチ/',
+                           '夜目遠目傘の中'),
+                          ('よろしきを得る', '～を得る'),
+                          ('寛大よろしきを得る', '＝寛大～を得る'),
+                          ('経営よろしきを得る', '＝経営～を得る'),
+                          ('李下に冠/カンムリ/を正さず, 李下の冠',
+                           '李下に冠を正さず, 李下の冠'),
+                          ('俚耳に入り易/イリヤス/い', '～に入り易/イリヤス/い'),
+                          ('俚耳に入りにくい', '～に入りにくい'),
+                          ('槍を(太刀を)りゅうりゅうとしごく',
+                           '＝槍(太刀)を～しごく'),
+                          ('両手ききの人', '～の人'),
+                          ('両天秤をかける', '～をかける'),
+                          ('釐亳も', '～も'),
+                          ('釐毫も違わない', '～も違わない'),
+                          ('凜と張った目', '～張った目'),
+                          ('凜とした態度', '～した態度'),
+                          ('列氏寒暖計', '～寒暖計'),
+                          ('連理の松/マツ/', '～の松/マツ/'),
+                          ('連理の契/チギ/り', '～の契/チギ/り'),
+                          ('六分の一', '～の一'),
+                          ('カ氏寒暖計', '～寒暖計'),
+                          ('セ氏寒暖計', '～寒暖計'),
+                          ('<i>неправ., см.</i>', '<i>неправ.</i> <i>см.</i>'),
+                          ('<i>сокр., см.</i>', '<i>сокр.</i> <i>см.</i>'),
+                          ('\n<i>употребляется в двух формах:</i>', ''),
+                          ('<i>уст. особая бумага, посылаемая в знак благодарности за небольшой подарок.</i>',
+                           '<i>уст.</i> особая бумага, посылаемая в знак благодарности за небольшой подарок.'),
+                          ('<a href="#005-67-03">おそるべき</a> <i>и др.</i>',
+                           '<a href="#005-67-03">おそるべき</a>.'),
+                          (
+                              'название яп. способа исчисления возраста (до 1949 г.), состоявшего в том, что год рождения считался за полный год; напр., считалось, что, в каком бы месяце 1903 г. ни родился ребёнок, с 1 января 1904 г. ему пошёл второй год',
+                              'название яп. способа исчисления возраста (до 1949 г.)'),
+                          ('<i>приписка после фамилии при адресовании писем.</i>',
+                           'приписка после фамилии при адресовании писем.'),
+                          ('[気が]腐る', '＝[気が]～'),
+                          ('そんなに腐るな', '＝そんなに～な'),
+                          ('化生の物', '～の物'),
+                          ('<i>буд. что-л., ставшее живым существом; что-л., принявшее облик живого существа</i>',
+                           '<i>буд.</i> что-л., ставшее живым существом; что-л., принявшее облик живого существа'),
+                          ('<a href="#000-65-10">これほど</a> <i>и др.</i>',
+                           '<a href="#000-65-10">これほど</a>'),
+                          ('<i>ист. один из титулов придворных дам.</i>',
+                           '<i>ист.</i> один из титулов придворных дам.'),
+                          ('事件を劇に仕組む', '＝事件を劇に～'),
+                          ('下に出す', '～に出す'),
+                          ('下に取る', '～に取る'),
+                          ('後を慕う', '＝後を～'),
+                          ('失礼ながら…, 失礼ですが…', '～ながら, ～ですが'),
+                          ('では失礼', '＝では～'),
+                          ('じっと見詰める', '～見詰める'),
+                          ('じっと我慢する(堪える)', '～我慢する, ～堪える'),
+                          ('\n<i>в наст. вр. обычно не переводится</i>;', ''),
+                          (';\n4) <i>после вопр. мест. см. самые местоимения</i>', ''),
+                          ('木という木', '＝木～木'),
+                          ('所だった', '～だった'),
+                          ('所です(だ)', '～です(だ)'),
+                          ('どっこいしょと腰を下ろす', '～と腰を下ろす'),
+                          ('物価がどんどん上がっている', '＝物価が～上がっている'),
+                          ('どんどん売れる', '～売れる'),
+                          ('湯をどんどん沸かす', '＝湯を～沸かす'),
+                          ('どんどん質問する', '～質問する'),
+                          ('美しいなあ', '＝美しい～'),
+                          ('なあ君、そうだろう', '～君、そうだろう'),
+                          ('猶…が如し(如くである)', '～…が如し(如くである)'),
+                          ('…ようになる', '…ように～'),
+                          ('…なくなる', '…なく～'),
+                          ('抜き差しができない', '～ができない'),
+                          ('抜き差しならぬ真実', '～ならぬ真実'),
+                          ('今月に入ってから', '＝今月に｜って～から'),
+                          ('梅雨に入る', '＝梅雨に～'),
+                          ('店を張る', '＝店を～'),
+                          ('世帯を張る', '＝世帯を～'),
+                          ('ぱっぱとタバコを吹かす', '～タバコを吹かす'),
+                          ('辞書を引く', '＝辞書を～'),
+                          ('祖先を祀る', '＝祖先を～'),
+                          ('祖先の霊を祀る', '＝祖先の霊を～'),
+                          ('もはや五時を回った', '＝もはや五時を｜った～'),
+                          ('…の向こうを張る', '…の～を張る'),
+                          ('目に合う', '～に合う'),
+                          ('持ちが良い', '～が良い'),
+                          ('持ちをよくする', '～をよくする'),
+                          ('そこが問題だ', '～が問題だ'),
+                          ('～になる постричься [в монахи]; <i>обр.</i> (<i>тж.</i> 坊主に刈る) коротко '
+                           'остричься, обрить голову;',
+                           '～になる постричься [в монахи];\n～になる, ～に刈る <i>обр.</i> коротко остричься, '
+                           'обрить голову;'),
+                          ('2): ～の <i>поэтическое определение к таким словам, как</i> <a '
+                           'href="#000-74-10">とし</a> <i>(год)</i>, <a href="#000-60-20">つき</a> <i>('
+                           'месяц) и т. п.</i>;',
+                           '2): ～の <i>поэтическое определение к таким словам, как год, месяц и т. п.</i>;'),
+                          ('～のある, 勢いの好い сильный; энергичный; смелый; влиятельный;',
+                           '～のある, ～の好い сильный; энергичный; смелый; влиятельный;'),
+                          ('～をする(に接する) приглашать (принимать) гостей, устраивать приём;',
+                           '～をする, ～に接する приглашать (принимать) гостей, устраивать приём;'),
+                          ('2) (<i>тк.</i> 梶, <i>тж.</i> 楫) рулевое весло;',
+                           '2) (<i>тк.</i> 梶) (<i>тж.</i> 楫) рулевое весло;'),
+                          ('(<i>санскр.</i> namo, <i>сокр.</i> 南無阿弥陀仏/ナムアミダブツ/)',
+                           '(<i>санскр.</i> namo) (<i>сокр.</i> 南無阿弥陀仏/ナムアミダブツ/)'),
+                          ('耳が肥えている', '＝耳が｜て～いる'),
+                          (
+                              '<i>разг. замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.</i>',
+                              '<i>разг.</i> замужняя женщина, которая по уговору с мужем или по его принуждению заводит любовника, после чего муж угрозами вымогает у того деньги.'),
+                          ('\n～に <i>см. ниже</i> 2;', ''),
+                          (
+                              '2. действительно, на [самом] деле, фактически, реально; практически, на практике; <i>(в конце предл.)</i> уверяю вас!',
+                              '2. ～[に] действительно, на [самом] деле, фактически, реально; практически, на практике; <i>(в конце предл.)</i> уверяю вас!'),
+                          ('ё', 'е')]
+
+            for src, trg in tqdm(to_replace, desc="[Warodai] Preprocessing raw source".ljust(34), disable=not show_progress):
+                contents = contents.replace(src, trg)
+
             s_contents = contents.split('\n\n')[1:]
 
             res = []
@@ -3818,5 +3832,6 @@ class WarodaiLoader:
 
     def load(self, fname: str = "default") -> WarodaiDictionary:
         if fname == 'default':
-            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath('dictionaries/warodai.jtdb')
+            fname = pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent.joinpath(
+                'dictionaries/warodai.jtdb')
         return pickle.load(open(fname, "rb"))

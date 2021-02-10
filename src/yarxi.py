@@ -258,7 +258,7 @@ class YarxiLoader:
                     if refs[i].eid:
                         refs[i].verified = True
                         refs[i].usable = True
-                        trg = [e for e in self._entries if e.eid == refs[i].eid][0]
+                        trg = self._get_entry_by_eid(refs[i].eid)
                         if refs[i].mode and trg.translation and all(tr.startswith(refs[i].mode) for tr in trg.translation):
                             refs[i].mode = ''
                     else:
