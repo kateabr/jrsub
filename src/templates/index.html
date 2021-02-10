@@ -40,7 +40,7 @@
             <input type="text" class="form-control" name="reading" id="reading" aria-label="Default"
                    aria-describedby="inputGroup-sizing-default2" value="{{ reading }}">
         </div>
-        <button type="submit" class="btn btn-primary" onclick="translate(); return false;">
+        <button type="submit" name="button" id="button" class="btn btn-primary" onclick="translate(); return false;">
             <span class="fas fa-search" style="margin-right: 10px"></span>Искать
         </button>
     </form>
@@ -82,7 +82,8 @@
         const lexeme = document.getElementById("lexeme").value;
         const reading = document.getElementById("reading").value;
         if (lexeme !== '') {
-            window.location.replace('/?dictionary=' + dictionary + '&lexeme=' + lexeme.trim() + '&reading=' + reading.trim());
+            window.location.href = '/?dictionary=' + dictionary + '&lexeme=' + lexeme.trim() + '&reading=' + reading.trim();
+            document.getElementById("button").disabled = true;
         }
 
     }
