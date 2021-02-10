@@ -1,4 +1,4 @@
-FROM python:3.9-alpine
+FROM python:3.9-slim-buster
 
 WORKDIR /app
 
@@ -10,4 +10,4 @@ COPY dictionaries/warodai.jtdb dictionaries/warodai.jtdb
 
 ENV PORT=5000
 
-ENTRYPOINT PYTHONPATH=$PYTHONPATH:/app gunicorn --chdir src flask_demo:app -b 0.0.0.0:$PORT
+ENTRYPOINT ["/bin/bash", "-c", "PYTHONPATH=$PYTHONPATH:/app gunicorn --log-level debug --chdir src flask_demo:app -b 0.0.0.0:$PORT"]
