@@ -258,6 +258,9 @@ class YarxiLoader:
                     if refs[i].eid:
                         refs[i].verified = True
                         refs[i].usable = True
+                        trg = [e for e in self._entries if e.eid == refs[i].eid][0]
+                        if refs[i].mode and trg.translation and all(tr.startswith(refs[i].mode) for tr in trg.translation):
+                            refs[i].mode = ''
                     else:
                         fitting = [et for et in self._entries if any(lex in et.lexeme for lex in refs[i].lexeme)]
                         if len(fitting) > 1:
@@ -267,6 +270,8 @@ class YarxiLoader:
                             refs[i].lexeme = ''
                             refs[i].verified = True
                             refs[i].usable = True
+                            if refs[i].mode and fitting[0].translation and all(tr.startswith(refs[i].mode) for tr in fitting[0].translation):
+                                refs[i].mode = ''
                         else:
                             for fit in [et for et in self._entries if refs[i].lexeme in et.lexeme]:
                                 refs.append(YarxiReference(eid=fit.eid, verified=False, usable=True, mode=refs[i].mode))
@@ -316,8 +321,8 @@ class YarxiLoader:
         text = re.sub(r'(\[?\\\'\'(?:\\-)?\\)([^\s].*?)(\\?\'\'\\]?)', r'\\«\2»\\', text)
         text = text.replace('\'', '')
         for _ in [1, 2]:
-            text = re.sub(r'([^\(\[《\-\s])\\(《|[\\|\(|#|\w|\d|«|\[])', r'\1 \2', text)
-        text = text.replace(')(', ') (')
+            text = re.sub(r'([^(\[《\-\s])\\(《|[\\(#\w\d«\[])', r'\1 \2', text)
+        text = re.sub(r'([)\]])([(\[])', lambda m: f'{m.group(1)} {m.group(2)}', text)
         text = text.replace('》(', '》 (')
         text = text.replace('\\', '')
         text = re.sub(r'([^\s])\+ ', lambda m: m.group(1) + ' ', text)
@@ -442,7 +447,13 @@ class YarxiLoader:
                 if word_refs:
                     if re.search(r'^\\?#\\?.*?\\?#\\?\^\^?\d+\\?_?', translation) is not None:
                         mode = self._clean_text(re.search(r'^(\\?#\\?.*?\\?#\\?)\^\^?\d+\\?_?', translation).group(1))
-                        translation = ''
+                        translation = re.sub(r'^\\?#\\?.*?\\?#\\?\^\^?\d+\\?_?', '', translation).strip()
+                    elif re.search(r'^\*+=?\d+\^\^?\d+', translation) is not None:
+                        mode = '〈~' + self._normalize_kana(re.search(r'^(\*+=?\d+)\^\^?\d+', translation).group(1), 'right') + '〉'
+                        translation = re.sub(r'^\*+=?\d+\^\^?\d+', '', translation).strip()
+                    elif re.search(r'^\*-\d+\\?\^\^?\d+', translation) is not None:
+                        mode = '〈-' + self._normalize_kana(re.search(r'^(\*-\d+)\\?\^\^?\d+', translation).group(1), 'left') + '〉'
+                        translation = re.sub(r'^\*-\d+\\?\^\^?\d+', '', translation).strip()
                     else:
                         mode = ''
 
@@ -507,9 +518,12 @@ class YarxiLoader:
                 g_tr = re.search(r'>(\d+)', translation)
                 temp = []
                 if g_tr is not None:
-                    for tr in g_tr.group(1):
-                        if tr != '0':
-                            temp.append(generic_translations[tr])
+                    if g_tr.group(1) in generic_translations.keys():
+                        temp.append(generic_translations[g_tr.group(1)])
+                    else:
+                        for tr in g_tr.group(1):
+                            if tr != '0':
+                                temp.append(generic_translations[tr])
                     translation = f"《{' или '.join(temp)}》"
                 else:
                     translation = self._clean_text(translation)
@@ -603,7 +617,7 @@ class YarxiLoader:
         for kj in tqdm(list(kanji.values())[2:], desc="[Yarxi] Updating kanji database".ljust(34), disable=not
         show_progress):
 
-            comp_readings = {'0': [_latin_to_hiragana(on) for on in re.split(r'[*,;\)\(-]', kj.on) if on]}
+            comp_readings = {'0': [_latin_to_hiragana(on) for on in re.split(r'[*,;)(-]', kj.on) if on]}
 
             if not comp_readings['0'] \
                     or kj.on.startswith('-') \
@@ -655,114 +669,114 @@ class YarxiLoader:
                             else:
                                 extension[already_there].translation.extend([self._in_compounds_pref + tr[1]])
             else:
-                nom_val = re.search(r'~=(.+)', kj.rus)
-                if nom_val is not None:
-                    already_there = self._in_container(extension, comp_readings['0'], [kj.kanji])
-                    if already_there == -1:
-                        already_there = self._in_container(self._entries, comp_readings['0'], [kj.kanji])
+                # nom_val = re.search(r'~\\(.+)', kj.rus)
+                # if nom_val is not None:
+                #     already_there = self._in_container(extension, comp_readings['0'], [kj.kanji])
+                #     if already_there == -1:
+                #         already_there = self._in_container(self._entries, comp_readings['0'], [kj.kanji])
+                #         if already_there == -1:
+                #             extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
+                #                                         lexeme=[kj.kanji],
+                #                                         translation=[self._in_compounds_pref + self._clean_text_kanji(
+                #                                             nom_val.group(1))],
+                #                                         eid=str(self._get_next_eid()),
+                #                                         references=[],
+                #                                         kanji=[kj.kanji]))
+                #         else:
+                #             self._entries[already_there].translation.extend(
+                #                 [self._in_compounds_pref + self._clean_text_kanji(nom_val.group(1))])
+                #     else:
+                #         extension[already_there].translation.extend(
+                #             [self._in_compounds_pref + self._clean_text_kanji(nom_val.group(1))])
+                # else:
+                    # nom_val = re.search(r'~\$(.+)', kj.rus)
+                    # if nom_val is not None:
+                    #     already_there = self._in_container(extension, comp_readings['0'], [kj.kanji])
+                    #     if already_there == -1:
+                    #         already_there = self._in_container(self._entries, comp_readings['0'], [kj.kanji])
+                    #         if already_there == -1:
+                    #             extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
+                    #                                         lexeme=[kj.kanji],
+                    #                                         translation=[self._in_compounds_pref + kj.rus_nick],
+                    #                                         eid=str(self._get_next_eid()),
+                    #                                         references=[],
+                    #                                         kanji=[kj.kanji]))
+                    #         else:
+                    #             self._entries[already_there].translation.extend([self._in_compounds_pref + kj.rus_nick])
+                    #     else:
+                    #         extension[already_there].translation.extend([self._in_compounds_pref + kj.rus_nick])
+                    # else:
+                cont = False
+                for case in complex_cases:
+                    if re.search(case, kj.rus) is not None:
+                        already_there = self._in_container(extension, comp_readings['0'],
+                                                           [self._get_kanji(re.search(case, kj.rus).group(1))])
                         if already_there == -1:
-                            extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
-                                                        lexeme=[kj.kanji],
-                                                        translation=[self._in_compounds_pref + self._clean_text_kanji(
-                                                            nom_val.group(1))],
-                                                        eid=str(self._get_next_eid()),
-                                                        references=[],
-                                                        kanji=[kj.kanji]))
-                        else:
-                            self._entries[already_there].translation.extend(
-                                [self._in_compounds_pref + self._clean_text_kanji(nom_val.group(1))])
-                    else:
-                        extension[already_there].translation.extend(
-                            [self._in_compounds_pref + self._clean_text_kanji(nom_val.group(1))])
-                else:
-                    nom_val = re.search(r'~\$(.+)', kj.rus)
-                    if nom_val is not None:
-                        already_there = self._in_container(extension, comp_readings['0'], [kj.kanji])
-                        if already_there == -1:
-                            already_there = self._in_container(self._entries, comp_readings['0'], [kj.kanji])
+                            already_there = self._in_container(self._entries, comp_readings['0'],
+                                                               [self._get_kanji(
+                                                                   re.search(case, kj.rus).group(1))])
                             if already_there == -1:
                                 extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
-                                                            lexeme=[kj.kanji],
-                                                            translation=[self._in_compounds_pref + kj.rus_nick],
+                                                            lexeme=[
+                                                                self._get_kanji(
+                                                                    re.search(case, kj.rus).group(1)),
+                                                                kj.kanji],
+                                                            translation=[],
                                                             eid=str(self._get_next_eid()),
                                                             references=[],
-                                                            kanji=[kj.kanji]))
+                                                            kanji=[
+                                                                self._get_kanji(
+                                                                    re.search(case, kj.rus).group(1)),
+                                                                kj.kanji]))
                             else:
-                                self._entries[already_there].translation.extend([self._in_compounds_pref + kj.rus_nick])
+                                self._entries[already_there].lexeme.append(kj.kanji)
+                                self._entries[already_there].kanji.append(kj.kanji)
                         else:
-                            extension[already_there].translation.extend([self._in_compounds_pref + kj.rus_nick])
-                    else:
-                        cont = False
-                        for case in complex_cases:
-                            if re.search(case, kj.rus) is not None:
-                                already_there = self._in_container(extension, comp_readings['0'],
-                                                                   [self._get_kanji(re.search(case, kj.rus).group(1))])
-                                if already_there == -1:
-                                    already_there = self._in_container(self._entries, comp_readings['0'],
-                                                                       [self._get_kanji(
-                                                                           re.search(case, kj.rus).group(1))])
-                                    if already_there == -1:
-                                        extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
-                                                                    lexeme=[
-                                                                        self._get_kanji(
-                                                                            re.search(case, kj.rus).group(1)),
-                                                                        kj.kanji],
-                                                                    translation=[],
-                                                                    eid=str(self._get_next_eid()),
-                                                                    references=[],
-                                                                    kanji=[
-                                                                        self._get_kanji(
-                                                                            re.search(case, kj.rus).group(1)),
-                                                                        kj.kanji]))
-                                    else:
-                                        self._entries[already_there].lexeme.append(kj.kanji)
-                                        self._entries[already_there].kanji.append(kj.kanji)
-                                else:
-                                    extension[already_there].lexeme.append(kj.kanji)
-                                    extension[already_there].kanji.append(kj.kanji)
-                                cont = True
-                                break
-                        if cont or '@\\7' in kj.rus:
-                            continue
-                        if re.search(r'\$\\60*(\d+)', kj.rus) is not None:
-                            single_comp_translation = [kj.rus_nick]
-                        elif any(special in kj.rus for special in ['@\\5', '@\\8']) \
-                                or re.search(r'^([^а-яА-Я]*?\d+)\*', kj.kun) is None:
-                            single_comp_translation = [re.sub(r'^~', '', tr[1]).strip()
-                                                       for tr in
-                                                       _split_and_clean_compound_translations(kj.rus, kj.rus_nick)
-                                                       if tr[1]]
-                        elif len([reading for reading in re.split(r'[^a-zA-Z]', kj.kun) if reading]) < len(
-                                kj.rus.split('/')):
-                            start_id = len([reading for reading in re.split(r'[^a-zA-Z]', kj.kun) if reading])
-                            single_comp_translation = [re.sub(r'^~', '', tr[1]).strip() for tr in _split_and_clean_compound_translations(''.join(kj.rus.split('/')[start_id:]), kj.rus_nick) if tr[1]]
-                            if len(comp_readings) > 1:
-                                comp_readings['0'] = comp_readings['1']
-                        elif '|' in kj.kun.split('||$')[0]:
-                            start_id = len([reading for reading in re.split(r'[^a-z]', kj.kun.split('|')[0]) if reading])
-                            single_comp_translation = [re.sub(r'^~', '', tr[1]).strip() for tr in _split_and_clean_compound_translations(''.join(kj.rus.split('/')[start_id:]), kj.rus_nick) if tr[1]]
-                            if len(comp_readings) > 1:
-                                comp_readings['0'] = comp_readings['1']
-                        elif kj.rus.startswith('=\\'):
-                            single_comp_translation = [kj.rus[2:]]
-                        else:
-                            single_comp_translation = [kj.rus_nick]
+                            extension[already_there].lexeme.append(kj.kanji)
+                            extension[already_there].kanji.append(kj.kanji)
+                        cont = True
+                        break
+                if cont or any(only_comp in kj.rus for only_comp in ['@\\7', '@7']):
+                    continue
+                if re.search(r'\$\\60*(\d+)', kj.rus) is not None:
+                    single_comp_translation = [kj.rus_nick]
+                elif re.search(r'=\\([а-я].+)', kj.rus) is not None:
+                    single_comp_translation = [self._clean_text_kanji(re.search(r'=\\([а-я].+)', kj.rus).group(1))]
+                elif any(special in kj.rus for special in ['@\\5', '@\\8']) \
+                        or re.search(r'^([^а-яА-Я]*?\d+)\*', kj.kun) is None:
+                    single_comp_translation = [re.sub(r'^~', '', tr[1]).strip()
+                                               for tr in
+                                               _split_and_clean_compound_translations(kj.rus, kj.rus_nick)
+                                               if tr[1]]
+                elif len([reading for reading in re.split(r'[^a-zA-Z]', kj.kun) if reading]) < len(
+                        kj.rus.split('/')):
+                    start_id = len([reading for reading in re.split(r'[^a-zA-Z]', kj.kun) if reading])
+                    single_comp_translation = [re.sub(r'^~', '', tr[1]).strip() for tr in _split_and_clean_compound_translations(''.join(kj.rus.split('/')[start_id:]), kj.rus_nick) if tr[1]]
+                    if len(comp_readings) > 1:
+                        comp_readings['0'] = comp_readings['1']
+                elif '|' in kj.kun.split('||$')[0]:
+                    start_id = len([reading for reading in re.split(r'[^a-z]', kj.kun.split('|')[0]) if reading])
+                    single_comp_translation = [re.sub(r'^~', '', tr[1]).strip() for tr in _split_and_clean_compound_translations(''.join(kj.rus.split('/')[start_id:]), kj.rus_nick) if tr[1]]
+                    if len(comp_readings) > 1:
+                        comp_readings['0'] = comp_readings['1']
+                else:
+                    single_comp_translation = [n for n in kj.rus_nick.split('#')[0].split('*') if n]
 
-                        if not single_comp_translation:
-                            continue
+                if not single_comp_translation:
+                    continue
 
-                        already_there = self._in_container(extension, comp_readings['0'], [kj.kanji])
-                        if already_there == -1:
-                            extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
-                                                        lexeme=[kj.kanji],
-                                                        translation=[self._in_compounds_pref + tr for tr in
-                                                                     single_comp_translation],
-                                                        eid=str(self._get_next_eid()),
-                                                        references=[],
-                                                        kanji=[kj.kanji]))
-                        else:
-                            extension[already_there].translation.extend(
-                                [self._in_compounds_pref + tr for tr in single_comp_translation])
+                already_there = self._in_container(extension, comp_readings['0'], [kj.kanji])
+                if already_there == -1:
+                    extension.append(YarxiEntry(reading=[cr for cr in comp_readings['0'] if cr],
+                                                lexeme=[kj.kanji],
+                                                translation=[self._in_compounds_pref + tr for tr in
+                                                             single_comp_translation],
+                                                eid=str(self._get_next_eid()),
+                                                references=[],
+                                                kanji=[kj.kanji]))
+                else:
+                    extension[already_there].translation.extend(
+                        [self._in_compounds_pref + tr for tr in single_comp_translation])
 
         for ext in tqdm(extension, desc="[Yarxi] Expanding word database".ljust(34), disable=not show_progress):
             already_there = self._in_container(self._entries, ext.reading, ext.lexeme)

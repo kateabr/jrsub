@@ -169,7 +169,7 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(self.yd.lookup_translations_only('淫りがわしい', 'みだりがわしい'),
                          self.yd.lookup_translations_only('淫ら', 'みだら'))
 
-        # general translations
+        # general translations with complicated markdown
         self.assertEqual(self.yd.lookup_translations_only('加圧', 'かあつ'),
                          ['подача под давлением, нагнетание; 〈~suru〉 подавать под давлением, нагнетать; 〈~shite〉,'
                           ' 〈[~no]〉 под давлением'])
@@ -203,6 +203,27 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(self.yd.lookup_translations_only('葫蘆', 'ころ'),
                          ['《редк.》 тыква-горлянка'])
 
+        self.assertCountEqual(self.yd.lookup_translations_only('アウトコース'),
+                              ['внешняя беговая дорожка (стадиона и т. п.)',
+                               'внешняя сторона, наружная часть (англ. 《outside》); 《в сочетаниях》 наружный, снаружи',
+                               '《бейсбол》 внешнее пространство (для броска; англ. 《out course》)'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('一寸', 'ちょっと'),
+                              ['〈~shita〉 маленький, слабый, пустяковый', '〈~shita〉 приличный, порядочный, неплохой',
+                               '《с отриц.》 никак, нелегко, вряд ли', 'немножко, чуточку; на минутку',
+                               '《обращение》 эй! послушайте!'])
+
+        self.assertEqual(self.yd.lookup_translations_only('曳々', 'えいえい'),
+                         ['〈~to〉 (тянуть с выкриком) «взяли!», «дружно!», «еще раз!»'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('合点', 'がてん'),
+                              ['〈~suru〉 соглашаться; кивать; 〈~ka〉 согласен?, нет возражений?',
+                               'понимание; 〈~suru〉 понимать'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('石', 'こく'),
+                              ['мера емкости [риса] (180 л, 10 то, 150 кг риса)',
+                               'мера объема [пиломатериалов] (0,278 куб. м., 10 куб. сяку)'])
+
         # there are two entries in which both lexeme and reading equal よう: [よう]:[よう] and [よう, 様]:[よう]
         self.assertCountEqual(self.yd.lookup_translations_only('よう', 'よう'),
                               ['《частица》 〈~na〉 такой как, похожий, вроде; 〈~ni〉, '
@@ -216,6 +237,31 @@ class YarxiTests(unittest.TestCase):
                                '《после глагола показывает, что действие начало совершаться》',
                                '《частица》 《в конце》 ну пожалуйста!, ну же!'])
 
+        self.assertCountEqual(self.yd.lookup_translations_only('どっこい'),
+                              ['《прост. межд.》 стой!, погоди!',
+                               '《прост. межд.》 взяли!; 〈~to〉 с большим трудом (поднимать); устало (плюхнуться, повалиться)'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('まあまあ'),
+                              [
+                                  '〈[~no]〉 неплохой, годный, удовлетворительный, более-менее; 〈~da〉 нормально, сойдет, ничего',
+                                  'полноте, довольно, ладно уже', '《межд.》 ох!, ах!'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('ヤード', 'やあど'),
+                              ['ярд (91,44 см)', 'площадка для хранения, склад (англ. 《yard》)'])
+
+        # some compound translations
+        self.assertCountEqual(self.yd.lookup_translations_only('尭', 'ぎょう'),
+                              ['〈в сочет.〉 император яо',
+                               'яо, мифический китайский император, четвертый из пяти совершенномудрых государей древности (2356-2258 до н. э.)'])
+
+        self.assertCountEqual(self.yd.lookup_translations_only('諄', 'じゅん'),
+                              ['〈в сочет.〉 назойливый', '《мужские имена》'])
+
+        self.assertEqual(self.yd.lookup_translations_only('吾', 'ご'),
+                         self.yd.lookup_translations_only('吾', 'あが'))
+
+        self.assertEqual(self.yd.lookup_translations_only('垢', 'こう'), ['〈в сочет.〉 грязь'])
+
     def test_likeliness_score(self):
         self.assertEqual(self.yd.lookup_translations_only('聖エルモ'), ['огни святого эльма'])
         self.assertEqual(self.yd.lookup_translations_only('乱麻'),
@@ -228,46 +274,59 @@ class YarxiTests(unittest.TestCase):
                           'нем. 《johann sebastian bach》)'])
 
     def test_no_empty_translations(self):
-        # for entry in tqdm(self.yd._entries, desc='Checking that translations are never empty'):
-        #     if not self.yd.translate(entry.reading[0], entry.lexeme[0]):
-        #         print(entry)
-
         # edits made in order to ensure that translation is never empty:
 
-        # 合せる -> 合わせる   +
+        # 合せる -> 合わせる
         self.assertCountEqual(self.yd.lookup_translations_only('勠せる', 'あわせる'),
                               ['[при] соединять', 'согласовывать', 'сличать, сопоставлять', 'подсекать (рыбу)'])
 
-        # 裡 -> edited の裡に at tango table into just 裡    -
+        # 裡 -> edited の裡に at tango table into just 裡
         self.assertEqual(self.yd.lookup_translations_only('裏', 'うち'), ['〈-no〉 〈~ni〉 в (условиях чего-л.)'])
         self.assertEqual(self.yd.lookup_translations_only('裡', 'うち'), self.yd.lookup_translations_only('裏', 'うち'))
 
-        # 逆う -> 逆らう     +
+        # 逆う -> 逆らう
         self.assertEqual(self.yd.lookup_translations_only('忤う', 'さからう'), ['идти против 《чего-л.》'])
 
-        # 華しい -> 華々しい   -
+        # 華しい -> 華々しい
         self.assertEqual(self.yd.lookup_translations_only('花々しい', 'はなばなしい'), ['〈~na〉 яркий, цветущий, прекрасный'])
 
-        # 捻くれる -> 捻れる   +
+        # 捻くれる -> 捻れる
         self.assertEqual(self.yd.lookup_translations_only('拈くれる', 'ひねくれる'), ['быть искривленным; быть замысловатым; '
                                                                              'быть извращенным'])
 
-        # 芽む -> 芽ぐむ     +
+        # 芽む -> 芽ぐむ
         self.assertEqual(self.yd.lookup_translations_only('萌む', 'めぐむ'), ['давать почки; распускаться'])
 
-        # 別かれ -> 別れ +
+        # 別かれ -> 別れ
         self.assertCountEqual(self.yd.lookup_translations_only('分かれ', 'わかれ'),
                               ['отделение, ответвление; развилка', 'расставание, разлука'])
 
-        # ちじみあがる -> ちぢみあがる  +
+        # other edits
+
+        # ちじみあがる -> ちぢみあがる
         self.assertCountEqual(self.yd.lookup_translations_only('縮み上がる', 'ちぢみあがる'), ['сжиматься; съеживаться'])
 
-        # いんなーわあ -> いんなーうぇあ     +
+        # いんなーわあ -> いんなーうぇあ
         self.assertCountEqual(self.yd.lookup_translations_only(lexeme='インナーウェア', reading='いんなあうぇあ'),
                               ['нательное (нижнее) белье (англ. 《innerware》)', 'нижнее белье'])
 
         # дюйм\(\англ.#\inchi\#) -> дюйм\(\англ.#\inch\#)
-        # 吋, 吾
+        self.assertEqual(self.yd.lookup_translations_only('吋', 'いんち'), ['дюйм (англ. 《inchi》)'])
+
+        # <<кино>> ср -> <<кино>> см
+        self.assertCountEqual(self.yd.lookup_translations_only('アップ'),
+                              ['повышение; улучшение (от англ. 《up》); 〈~suru〉 повышать [ся]; улучшать [ся]',
+                               '《фото》 《перен.》 повышенное внимание; 〈~suru〉 привлекать внимание 《к чему-л.》; 〈~sareru〉 быть в центре внимания, выходить на передний план',
+                               '《тех.》 кривошип (англ. 《crank》)', 'рукоятка (особ. кинокамеры старого образца)',
+                               '《комп.》 загрузка, заливка (англ. 《upload》); 〈~suru〉 загружать',
+                               'зачесанные кверху волосы (англ. 《up style》)',
+                               '《фото》 《фото, кино》 крупный план (англ. 《close-up》); 〈~de〉 крупным планом; 〈~suru〉 снимать крупным планом; 〈~sareru〉 идти крупным планом',
+                               '《кино》 завершение съемки кинофильма (англ. 《crank up》; букв. «рукоятку вверх»)',
+                               '《муз.》 кранк (стиль хип-хопа; англ. 《crunk》)'])
+
+        # кольцо\,,\круг\;*3\кольцевидный\,\круглый -> кольцо\,\круг\;*3\кольцевидный\,\круглый
+        self.assertEqual(self.yd.lookup_translations_only('輪形', 'わがた'),
+                         ['кольцо, круг; 〈~no〉 кольцевидный, круглый'])
 
     def test_matching_lexemes(self):
         self.assertEqual(self.yd.lookup_translations_only('繰り返す', 'くりかえす'),
