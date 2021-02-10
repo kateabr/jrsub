@@ -136,6 +136,10 @@ class MyTestCase(unittest.TestCase):
         self.assertEqual(self.wd.lookup_translations_only('裏書譲渡'),
                          ['〈~suru〉 делать передаточную надпись, индоссировать, жирировать'])
 
+        self.assertCountEqual(self.wd.lookup_translations_only('匹', 'ひき'),
+                              ['《счетный суф. для животных》', '《после числит.》 хики 《мера измерения тканей = 21,2 м》',
+                               '《после числит.》 штука 《напр. шелка》', '= 2 тан = 21,2 м 《для измерения тканей》'])
+
     def test_bad_readings(self):
         bad = []
         for e in self.wd._entries:

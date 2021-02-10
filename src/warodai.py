@@ -113,7 +113,7 @@ class WarodaiDictionary:
         return final_res
 
     def _translate_by_eid(self, eid: str) -> List[str]:
-        def _retrieve_from_references(refs: [WarodaiReference]) -> List[str]:
+        def _retrieve_from_references(refs: [WarodaiReference], visited_references: List[str]) -> List[str]:
             if not refs:
                 return []
 
@@ -121,6 +121,8 @@ class WarodaiDictionary:
             rrefs = []
 
             for ref in refs:
+                if ref.eid in visited_references:
+                    continue
                 temp_meanings = []
                 temp_rrefs = []
                 entry = self._get_entry_by_eid(ref.eid)
@@ -149,13 +151,14 @@ class WarodaiDictionary:
 
                 meanings.extend(temp_meanings)
                 rrefs.extend(temp_rrefs)
+                visited_references.append(ref.eid)
 
-            return meanings + _retrieve_from_references(rrefs)
+            return meanings + _retrieve_from_references(rrefs, visited_references)
 
         entry = self._get_entry_by_eid(eid)
 
         return sum(list(entry.translation.values()), []) + [m for m in _retrieve_from_references(
-            sum(list(entry.references.values()), [])) if m]
+            sum(list(entry.references.values()), []), [entry.eid]) if m]
 
     def lookup_translations_only(self, lexeme: str, reading: str = '') -> List[str]:
         return list(dict.fromkeys(sum([tr.translation for tr in self.lookup(lexeme, reading)], [])))
