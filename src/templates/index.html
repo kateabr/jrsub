@@ -33,12 +33,12 @@
             </div>
             <input type="text" class="form-control" name="lexeme" id="lexeme" aria-label="Default"
                    aria-describedby="inputGroup-sizing-default" required style="margin-right: 10px"
-                   value="{{ lexeme }}">
+                   value="{{ lexeme if lexeme else '' }}">
             <div class="input-group-prepend">
                 <span class="input-group-text" id="inputGroup-sizing-default2">Чтение</span>
             </div>
             <input type="text" class="form-control" name="reading" id="reading" aria-label="Default"
-                   aria-describedby="inputGroup-sizing-default2" value="{{ reading }}">
+                   aria-describedby="inputGroup-sizing-default2" value="{{ reading if reading else '' }}">
         </div>
         <button type="submit" name="button" id="button" class="btn btn-primary" onclick="translate(); return false;">
             <span class="fas fa-search" style="margin-right: 10px"></span>Искать
