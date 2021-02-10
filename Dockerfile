@@ -10,4 +10,4 @@ COPY dictionaries/warodai.jtdb dictionaries/warodai.jtdb
 
 ENV PORT=5000
 
-ENTRYPOINT ["/bin/bash", "-c", "PYTHONPATH=$PYTHONPATH:/app gunicorn --log-level debug --chdir src flask_demo:app -b 0.0.0.0:$PORT"]
+CMD PYTHONPATH=$PYTHONPATH:/app gunicorn --log-level debug --chdir src -b :$PORT flask_demo:app
