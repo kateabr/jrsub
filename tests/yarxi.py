@@ -262,6 +262,8 @@ class YarxiTests(unittest.TestCase):
 
         self.assertEqual(self.yd.lookup_translations_only('垢', 'こう'), ['〈в сочет.〉 грязь'])
 
+        self.assertEqual(self.yd.lookup_translations_only('明け六つ', 'あけむつ'), ['《уст.》 шесть часов утра'])
+
     def test_likeliness_score(self):
         self.assertEqual(self.yd.lookup_translations_only('聖エルモ'), ['огни святого эльма'])
         self.assertEqual(self.yd.lookup_translations_only('乱麻'),

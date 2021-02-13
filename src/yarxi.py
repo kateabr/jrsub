@@ -307,6 +307,7 @@ class YarxiLoader:
         text = text.replace('\\+', '')
         text = text.replace('!!', '/')
         text = re.sub(r'^_', '', text)
+        text = text.replace('@\\', '')
         text = re.sub(r'\[\\\'\'\\\^(.*)\\\'\'\\\]', lambda m: f'(от «{m.group(1)}»)', text)
         text = re.sub(r'(\^[\^|@])', '', text)
         text = re.sub(r'([^\s])_([^\s])', r'\1, \2', text)
