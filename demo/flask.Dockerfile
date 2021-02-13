@@ -4,6 +4,7 @@ WORKDIR /app
 RUN pip install jrsub flask gunicorn
 
 COPY flask.py app.py
+COPY templates/index.html templates/index.html
 
 ENV PORT=5000
 
