@@ -3,8 +3,8 @@ WORKDIR /app
 
 RUN pip install jrsub flask gunicorn
 
-COPY flask.py flask.py
+COPY flask.py app.py
 
 ENV PORT=5000
 
-CMD gunicorn -b :$PORT flask:app
+CMD gunicorn -b :$PORT app:app
