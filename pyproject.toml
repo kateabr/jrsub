@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "jrsub"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python package for Warodai and Yarxi dictionaries"
 license = "MIT"
 authors = ["Ekaterina Biryukova <kateabr@yandex.ru>"]
@@ -13,7 +13,6 @@ include = [
     "dictionaries/yarxi.jtdb"
 ]
 classifiers = [
-    "Programming Language :: Python :: 3.5",
     "Programming Language :: Python :: 3.6",
     "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
@@ -21,7 +20,7 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.5"
+python = "^3.6"
 jtran = "^0.2.13"
 tqdm = "^4.56.2"
 

@@ -11,7 +11,7 @@ jobs:
   include:
     # build library
     - language: python
-      python: 3.5
+      python: 3.6
 
       before_install:
         - pip install poetry
@@ -44,7 +44,7 @@ jobs:
         - docker login --username=_ --password=$HEROKU_API_KEY registry.heroku.com
 
       script:
-        - docker build -t registry.heroku.com/jsub-demo/web demo/flask.Dockerfile
+        - docker build -t registry.heroku.com/jsub-demo/web -f demo/flask.Dockerfile demo
 
       deploy:
         provider: script
