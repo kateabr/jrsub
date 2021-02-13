@@ -1,11 +1,9 @@
 import collections
 import re
 import unittest
-import time
 
-from src.search import SearchMode
-from src.utils import _is_hiragana
-from src.yarxi import YarxiDictionary, YarxiLoader
+from jsub import SearchMode, YarxiDictionary, YarxiLoader
+from jsub.utils import _is_hiragana
 
 
 class YarxiTests(unittest.TestCase):

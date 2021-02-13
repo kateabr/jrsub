@@ -1,0 +1,30 @@
+[tool.poetry]
+name = "jsub"
+version = "0.1.0"
+description = "Python package for Warodai and Yarxi dictionaries"
+license = "MIT"
+authors = ["Ekaterina Biryukova <kateabr@yandex.ru>"]
+homepage = "https://github.com/kateabr/jsub"
+repository = "https://github.com/kateabr/jsub"
+readme = "README.md"
+include = [
+    "LICENSE",
+    "dictionaries/warodai.jtdb",
+    "dictionaries/yarxi.jtdb"
+]
+classifiers = [
+    "Programming Language :: Python :: 3.5",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.poetry.dependencies]
+python = "^3.5"
+jtran = "^0.2.13"
+tqdm = "^4.56.2"
+
+[tool.poetry.dev-dependencies]
+flake8 = "^3.7.9"
+
