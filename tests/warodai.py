@@ -1,7 +1,7 @@
 import unittest
 
-from jsub.utils import _is_hiragana
-from jsub import WarodaiDictionary, WarodaiLoader
+from jrsub.utils import _is_hiragana
+from jrsub import WarodaiDictionary, WarodaiLoader
 
 
 class MyTestCase(unittest.TestCase):

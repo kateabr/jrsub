@@ -9,10 +9,10 @@ from typing import List
 from jtran import JTran
 from tqdm import tqdm
 
-from jsub import WarodaiEntry
-from jsub import WarodaiReference
-from jsub import SearchResult, SearchMode
-from jsub.utils import _hiragana_to_latin, _is_kanji, _is_hira_or_kata, _is_hiragana, _distance
+from jrsub import WarodaiEntry
+from jrsub import WarodaiReference
+from jrsub import SearchResult, SearchMode
+from jrsub.utils import _hiragana_to_latin, _is_kanji, _is_hira_or_kata, _is_hiragana, _distance
 
 
 @dataclass

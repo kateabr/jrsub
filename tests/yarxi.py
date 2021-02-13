@@ -2,8 +2,8 @@ import collections
 import re
 import unittest
 
-from jsub import SearchMode, YarxiDictionary, YarxiLoader
-from jsub.utils import _is_hiragana
+from jrsub import SearchMode, YarxiDictionary, YarxiLoader
+from jrsub.utils import _is_hiragana
 
 
 class YarxiTests(unittest.TestCase):

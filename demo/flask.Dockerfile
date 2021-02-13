@@ -1,7 +1,7 @@
 FROM python:3.9-slim-buster
 WORKDIR /app
 
-RUN pip install jsub flask gunicorn
+RUN pip install jrsub flask gunicorn
 
 COPY flask.py flask.py
 

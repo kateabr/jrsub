@@ -20,7 +20,7 @@ jobs:
         - poetry install
 
       script:
-        - poetry run flake8 jsub tests
+        - poetry run flake8 jrsub tests
         - poetry run python -m unittest discover
 
       deploy:

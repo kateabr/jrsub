@@ -3,8 +3,8 @@ import time
 
 from flask import Flask, render_template, request
 
-from jsub import WarodaiLoader
-from jsub import YarxiLoader
+from jrsub import WarodaiLoader
+from jrsub import YarxiLoader
 
 app = Flask(__name__)
 yd = YarxiLoader().load()

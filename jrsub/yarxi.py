@@ -9,10 +9,10 @@ from typing import List, Tuple
 
 from tqdm import tqdm
 
-from jsub import YarxiEntry
-from jsub import YarxiReference
-from jsub import SearchMode, SearchResult
-from jsub.utils import _is_kanji, _is_hira_or_kata, _is_hiragana, _distance, _latin_to_hiragana, _latin_to_katakana
+from jrsub import YarxiEntry
+from jrsub import YarxiReference
+from jrsub import SearchMode, SearchResult
+from jrsub.utils import _is_kanji, _is_hira_or_kata, _is_hiragana, _distance, _latin_to_hiragana, _latin_to_katakana
 
 
 class YarxiDictionary:

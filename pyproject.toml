@@ -1,11 +1,11 @@
 [tool.poetry]
-name = "jsub"
+name = "jrsub"
 version = "0.1.0"
 description = "Python package for Warodai and Yarxi dictionaries"
 license = "MIT"
 authors = ["Ekaterina Biryukova <kateabr@yandex.ru>"]
-homepage = "https://github.com/kateabr/jsub"
-repository = "https://github.com/kateabr/jsub"
+homepage = "https://github.com/kateabr/jrsub"
+repository = "https://github.com/kateabr/jrsub"
 readme = "README.md"
 include = [
     "LICENSE",

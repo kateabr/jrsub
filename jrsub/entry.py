@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List
 
-from jsub import WarodaiReference, YarxiReference
+from jrsub import WarodaiReference, YarxiReference
 
 
 @dataclass

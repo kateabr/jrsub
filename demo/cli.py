@@ -1,5 +1,5 @@
-from jsub import WarodaiLoader
-from jsub import YarxiLoader
+from jrsub import WarodaiLoader
+from jrsub import YarxiLoader
 
 if __name__ == '__main__':
     print('Select a dictionary: [y]arxi or [w]arodai')
