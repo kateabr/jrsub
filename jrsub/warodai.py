@@ -1419,7 +1419,6 @@ class WarodaiLoader:
                                '動kenai': 'ugokenai 【動けない】',
                                'ga継genai': 'ga tsugenai 【継げない】',
                                'wo継genakusuru': 'wo tsugenaku 【継げなく】 suru',
-                               'mo出naiyounisuru': 'mo denai 【出ない】 you ni suru',
                                'kokoha': 'koko wa',
                                'noyoi床': 'no yoi yuka 【床】',
                                'no良i靴': 'no ii 【良い】 kutsu 【靴】',
@@ -1434,7 +1433,6 @@ class WarodaiLoader:
                                'wo憚ru事gara': 'wo habakaru 【憚る】 kotogara 【事がら】',
                                '空ni': 'sora 【空】 ni',
                                '[no笛]': '[no fue 【笛】]',
-                               'wo吹ku': 'wo fuku 【吹く】',
                                'no策': 'no saku 【策】',
                                '敵軍ni': 'tekigun 【敵軍】 ni',
                                'wo放tsu': 'wo hanatsu 【放つ】',
@@ -1473,7 +1471,6 @@ class WarodaiLoader:
                                '手wo': 'te 【手】 wo',
                                '叩ku': 'tataku 【叩く】',
                                '嚙mitsuku': 'kamitsuku 【嚙みつく】',
-                               'shita目': 'shita me 【目】',
                                'akeru': 'akeru',
                                '刀wo': 'yaiba 【刀】 wo',
                                'sayani納meru': 'saya ni osameru 【納める】',
@@ -1486,9 +1483,7 @@ class WarodaiLoader:
                                'wo命zuru': 'wo meizuru 【命ずる】',
                                'wo願u': 'wo negau 【願う】',
                                'ga好i': 'ga ii 【好い】',
-                               '鳴ru音': 'naru 【鳴る】 oto 【音】',
                                '本wo閉jiru': 'hon 【本】 wo tojiru 【閉じる】',
-                               'ni濡reru': 'ni nureru 【濡れる】',
                                '汗wokaku': 'ase 【汗】 wo kaku',
                                'シャツga汗de': 'SHATSU 【シャツ】 ga ase 【汗】 de',
                                '裂ku': 'saku 【裂く】',
@@ -1533,7 +1528,6 @@ class WarodaiLoader:
                                'tonameru': 'to nameru',
                                'to舌wo出su': 'to shita 【舌】 wo dasu 【出す】',
                                'to平rageru': 'to tairageru 【平らげる】',
-                               'to食beru': 'to taberu 【食べる】',
                                'shitai': 'shitai',
                                '言itai': 'iitai 【言いたい】',
                                'nokotowo言u': 'no koto wo iu 【言う】',
@@ -1577,7 +1571,6 @@ class WarodaiLoader:
                                'no海': 'no umi 【海】',
                                'no手': 'no te 【手】',
                                'woyokeru': 'wo yokeru',
-                               '目ga': 'me 【目】 ga',
                                'youna高sa': 'you na takasa 【高さ】',
                                'renai': 'renai',
                                '肥eteiru': 'koete 【肥えて】 iru',
@@ -1599,10 +1592,8 @@ class WarodaiLoader:
                                '[to]動ku': '[to] ugoku 【動く】',
                                'wotsukeru': 'wo tsukeru',
                                'wotsukerutameni言u': 'wo tsukeru tame ni iu 【言う】',
-                               'ga付ku': 'ga tsuku 【付く】',
                                '付ite以来': 'tsuite 【付いて】 irai 【以来】',
                                'notsukanai内ni': 'no tsukanai uchi 【内】 ni',
-                               'wo食wasu': 'wo kuwasu 【食わす】',
                                'suruto': 'suru to',
                                'no縁/エン/': 'no en 【縁】',
                                'sonnakotohanai': 'sonna koto wa nai',
@@ -1660,7 +1651,9 @@ class WarodaiLoader:
                                'ni接suru': 'ni sessuru 【接する】',
                                '耳ga': 'mimi 【耳】 ga',
                                'iru': 'iru',
-                               'タバコwo吹kasu': 'TABAKO 【タバコ】 wo fukasu 【吹かす】'}
+                               'タバコwo吹kasu': 'TABAKO 【タバコ】 wo fukasu 【吹かす】',
+                               '版図, 戸籍': 'hanto 【版図】, koseki 【戸籍】',
+                               '変dato': 'hen 【変】 da to'}
     _max_eid: WarodaiEid
 
     def toggle_transliteration(self, mode: bool):
@@ -1826,7 +1819,7 @@ class WarodaiLoader:
                                 translations[i] = ''
                             break
 
-                        if 'сокр.' in decomposed_tr.group('mode') or 'от' in decomposed_tr.group('mode'):
+                        if 'сокр.' in decomposed_tr.group('mode') or any(fr in decomposed_tr.group('mode') for fr in ['от ', ' от']):
                             break
 
                         if not mode:
@@ -1835,7 +1828,7 @@ class WarodaiLoader:
                             body = decomposed_tr.group('body')
 
                         ref = WarodaiReference(eid=decomposed_tr.group('eid'),
-                                               mode=re.sub(r'\s?см.', '', decomposed_tr.group('mode')[1:-1]),
+                                               mode=re.sub(r',?\s?см.', '', decomposed_tr.group('mode')[1:-1]),
                                                body=body.strip(),
                                                verified=True,
                                                usable=True)
@@ -2115,7 +2108,19 @@ class WarodaiLoader:
             cleaned_translations = [re.sub(r'(?:<i>)(?P<op_pr>\(?)(?P<body>.+?)(?P<punct>[:;]?)(?P<cl_pr>\)?)(?:<\/i>)',
                                            lambda m: f'《{m.group("op_pr")}{m.group("body")}{m.group("cl_pr")}》', tr) for
                                     tr in cleaned_translations]
-            cleaned_translations = [re.sub(r'(\.》)$', '》', ct) for ct in cleaned_translations]
+
+            if any('》' in t for t in cleaned_translations):
+                quotes = [(re.search(r'《([^》]+)》$', t), cleaned_translations.index(t)) for t in cleaned_translations]
+                quotes = [i for q, i in quotes if q is not None and ' ' in q.group(1)
+                          and re.search(r'[a-zA-Z]+', q.group(1)) is None
+                          and q.group(1).endswith('.')
+                          and not any(q.group(1).endswith(end) for end
+                                      in [' вр.', '-л.', 'знач.', 'гл.', ' гг.', 'т. п.', 'и др.', 'т. д.', 'накл.'])
+                          and q.group(1) != 'С. У.']
+
+                for i in quotes:
+                    cleaned_translations[i] = re.sub(r'\.》$', '》', cleaned_translations[i])
+
             cleaned_translations = [re.sub(r'(\(《[^\(\)]+》\))', lambda m: m.group(1)[1:-1], ct) for ct in
                                     cleaned_translations]
             cleaned_translations = [re.sub(r'(《\([^\(\)]+\)》)', lambda m: f'《{m.group(1)[2:-2]}》', ct) for ct in
@@ -2123,6 +2128,7 @@ class WarodaiLoader:
             cleaned_translations = [ct.replace(', ср.》', '》') for ct in cleaned_translations]
             cleaned_translations = [re.sub(r'《«([^《«»》]+)»》', r'《\1》', ct) for ct in cleaned_translations]
             cleaned_translations = [ct.replace('.》 《', '. ') for ct in cleaned_translations]
+            cleaned_translations = [ct.replace('》; 《', '; ') for ct in cleaned_translations]
 
             for i, _ in enumerate(cleaned_translations):
                 old_kp = list({x[:-1] if re.search(r'^[^(]+\)', x) else x for x in
@@ -3821,6 +3827,51 @@ class WarodaiLoader:
                           (
                               ' (<i>а) время от 2 до 4 часов дня и ночи; б) 3 часа дня и ночи; ср.</i> <a href="#005-63-22">とき【時】2</a> <i>и</i> <a href="#008-10-52">ここのつどき</a>).',
                               ': время от 2 до 4 часов дня и ночи; 3 часа дня и ночи.'),
+                          ('<i>(1) на билет при покупке у барышника; 2) на акцию сверх номинала, при повышенной котировке)</i>.',
+                           '<i>(на билет при покупке у барышника; на акцию сверх номинала, при повышенной котировке)</i>.'),
+                          ('1) <i>уст., вошёл в р-н Дайто;</i> 2) <i>парк в Токио.</i>',
+                           '\n1) <i>уст., вошёл в р-н Дайто;</i>\n2) <i>парк в Токио.</i>'),
+                          ('<i>(1) высшая степень духовного совершенства; 2) подвижник, достигший этой степени совершенства)</i>.',
+                           '\n1) <i>высшая степень духовного совершенства;</i>\n2) <i>подвижник, достигший этой степени совершенства</i>.'),
+                          ('<i>(1) о соперничестве между государствами в области науки; 2) о войне с применением средств, созданных на основе новейших достижений науки и техники)</i>.',
+                           '\n1) <i>о соперничестве между государствами в области науки;</i>\n2) <i>о войне с применением средств, созданных на основе новейших достижений науки и техники</i>.'),
+                          ('<i>(1) сорт яп. зелёного чая; 2) название одного из танцев театра Кабуки)</i>.',
+                           '\n1) <i>сорт яп. зелёного чая;</i>\n2) <i>название одного из танцев театра Кабуки</i>.'),
+                          ('<i>(1) приставка к посмертным буддийским именам верующих мирян; 2) обозначение тех, кто выполняет обеты без пострижения в монахи)</i>.',
+                           '\n1) <i>приставка к посмертным буддийским именам верующих мирян;</i>\n2) <i>обозначение тех, кто выполняет обеты без пострижения в монахи</i>.'),
+                          ('<i>(1) вид песенного сказа в XV — XVI вв.; 2) вид представлений театра марионеток в XVII — XVIII вв.)</i>.',
+                           '\n1) <i>вид песенного сказа в XV — XVI вв.;</i>\n2) <i>вид представлений театра марионеток в XVII — XVIII вв.</i>.'),
+                          ('<i>(совр.</i> Чунгбо́, <i>центральная часть Вьетнама).</i>',
+                           '(<i>совр.</i> Чунгбо́).'),
+                          (' (<i>т. н.</i> <a href="#003-04-08">じょうげん【上元】</a>, <a href="#007-27-72">ちゅうげん【中元】</a> <i>и</i> <a href="#000-47-62">かげん【下元】</a>)',
+                           ''),
+                          (' <i>ср.</i> <a href="#000-11-63">しょうブル</a>, <a href="#000-49-03">しょうきぼ</a> <i>и др.</i>;',
+                           ''),
+                          ('; ср.</i> <a href="#008-10-52">ここのつどき</a>, <a href="#008-35-40">やつどき</a>, <a href="#007-11-93">ななつどき</a> <i>и т. д.</i>',
+                           ''),
+                          (': а) 春の七草<i> (весенние)</i>: <i>см.</i> <a href="#006-10-38">なずな</a>, <a href="#002-81-23">すずな</a>, <a href="#005-70-70">すずしろそう</a>, <a href="#009-22-62">せり【芹】</a>, <a href="#000-08-32">はこべ</a>, <a href="#006-03-68">ははこぐさ</a>, <a href="#002-63-33">ほとけのざ</a>; б) 秋の七草 <i>(осенние)</i>: <i>см.</i> <a href="#002-25-56">あさがお</a> <i>или</i> <a href="#006-48-72">ききょう【桔梗】</a>, <a href="#000-13-03">くず【葛】</a>, <a href="#001-59-57">なでしこ</a>, <a href="#007-37-62">おばな【尾花】</a>, <a href="#003-47-59">おみなえし</a>, <a href="#003-40-34">ふじばかま</a>, <a href="#008-09-53">はぎ【萩】</a>',
+                           ''),
+                          ('(<i>а) время от 4 до 6 часов дня и ночи; б) 5 часов дня и ночи; ср.</i> <a href="#005-63-22">とき【時】2</a> <i>и</i> <a href="#008-10-52">ここのつどき</a>)',
+                           '(<i>время от 4 до 6 часов дня и ночи; 5 часов дня и ночи</i>)'),
+                          ('1) <i>побуд. залог гл.</i> <a href="#007-86-07">はたらく</a> <i>в 1-м знач.</i>;',
+                           '1) <i>побуд. залог гл.</i> <a href="#007-86-07">はたらく 1</a>;'),
+                          ('<a href="#004-38-66">はんと【版図】</a> <i>и</i> <a href="#006-92-82">こせき【戸籍】</a>',
+                           '版図 <i>и</i> 戸籍'),
+                          ('; ср.</i> <a href="#001-18-01">ひばく【被爆】</a>, <a href="#002-00-07">ひがいしゃ</a> <i>и др',
+                           ''),
+                          (' (<i>из-за созвучия слов</i> <a href="#006-38-91">こおりがし【氷菓子】</a> <i>и</i> <a href="#007-72-05">こうりがし【高利貸し】</a>)',
+                           ''),
+                          ('2) <i>побуд. форма гл.</i> <a href="#008-81-72">おこす【起こす】</a> <i>в других знач.</i>',
+                           '2) <i>побуд. форма гл.</i> <a href="#008-81-72">おこす【起こす】</a>'),
+                          ('\n7) <i>форма потенциального залога гл.</i> <a href="#009-18-92"> とる【取る】</a> <i>во всех его знач., напр.:</i>',
+                           ''),
+                          ('\n(<i>форма побуд. залога от гл.</i> <a href="#002-28-12">おもう</a> <i>в знач.</i> 1 <i>и</i> 2)',
+                           ''),
+                          ('2) <i>см.</i> <a href="#006-78-84">ちゅうきょう</a> <i>(географическое название)</i>',
+                           '2) <i>(географическое название)</i> <i>см.</i> <a href="#006-78-84">ちゅうきょう</a>'),
+                          ('1): 彼は人に彼一人でそれをやったのだと思わせた он создал впечатление, будто он это сделал один;',
+                           '1) ＝変だと～ производить странное впечатление; наводить на мысль, что <i>что-л.</i> странно;'),
+                          (', напр.:</i>', '</i>'),
                           ('ё', 'е')]
 
             for src, trg in tqdm(to_replace, desc="[Warodai] Preprocessing raw source".ljust(34),
