@@ -144,7 +144,7 @@ class WarodaiDictionary:
                     temp_rrefs = [r for r in temp_rrefs if ref.prefix in r.body]
 
                 if ref.mode:
-                    temp_meanings = [f'《{ref.mode}》' + ' ' + meaning for meaning in temp_meanings]
+                    temp_meanings = [ref.mode + ' ' + meaning for meaning in temp_meanings]
 
                 if ref.body:
                     temp_meanings = [ref.body + ' ' + meaning for meaning in temp_meanings]
@@ -1655,9 +1655,13 @@ class WarodaiLoader:
                                '版図, 戸籍': 'hanto 【版図】, koseki 【戸籍】',
                                '変dato': 'hen 【変】 da to'}
     _max_eid: WarodaiEid
+    _highlighting = ('《', '》')
 
     def toggle_transliteration(self, mode: bool):
         self._transliterate_collocations = mode
+
+    def set_highlighting(self, left: str, right: str):
+        self._highlighting = (left, right)
 
     def _normalize_kana(self, string: str) -> str:
         if self._transliterate_collocations:
@@ -1681,7 +1685,7 @@ class WarodaiLoader:
         self._entries[self._get_entry_index_by_eid('003-19-23')].references['1'][0].eid = str(self._max_eid)
         self._entries.append(WarodaiEntry(eid=self._max_eid.inc(), reading=['ざいく'], lexeme=['細工'],
                                           translation={
-                                              '1': ['《как 2-й компонент сложн. сл.》 [мелкие] изделия, поделки']},
+                                              '1': [f'{self._highlighting[0]}как 2-й компонент сложн. сл.{self._highlighting[1]} [мелкие] изделия, поделки']},
                                           references={}))
 
         self._extend_database(temp_entries)
@@ -1737,6 +1741,9 @@ class WarodaiLoader:
             for ref_id in entry.references:
                 for j, ref in enumerate(entry.references[ref_id]):
                     targ_entry = self._get_entry_by_eid(ref.eid)
+                    if self._entries[i].references[ref_id][j].mode:
+                        self._entries[i].references[ref_id][j].mode =\
+                            f'{self._highlighting[0]}{self._entries[i].references[ref_id][j].mode}{self._highlighting[1]}'
                     if targ_entry is None:
                         self._entries[i].references[ref_id][j].usable = False
                     elif ref.meaning_number == ['-1']:
@@ -1819,8 +1826,7 @@ class WarodaiLoader:
                                 translations[i] = ''
                             break
 
-                        if 'сокр.' in decomposed_tr.group('mode') or any(
-                                fr in decomposed_tr.group('mode') for fr in ['от ', ' от']):
+                        if 'сокр.' in decomposed_tr.group('mode') or any(fr in decomposed_tr.group('mode') for fr in ['от ', ' от']):
                             break
 
                         if not mode:
@@ -1849,11 +1855,16 @@ class WarodaiLoader:
             return res, [tr for tr in translations if tr]
 
         def _normalize_translations(translations: List[str]) -> {int: List[str]}:
+            def _change_highlighting(translation: str) -> str:
+                if self._highlighting != ('《', '》'):
+                    return translation.replace('《', self._highlighting[0]).replace('》', self._highlighting[1])
+                return translation
+
             if not translations:
                 return {}
             res = {}
             keys = [re.search(r'〔(\d+)〕', item).group(1) for item in translations]
-            values = [re.search(r'〔\d+〕(.+)', item).group(1) for item in translations]
+            values = [_change_highlighting(re.search(r'〔\d+〕(.+)', item).group(1)) for item in translations]
             for item in zip(keys, values):
                 res.setdefault(item[0], []).append(item[1])
             return res
@@ -2077,8 +2088,7 @@ class WarodaiLoader:
                         else:
                             tmp1 = re.search(b_num_expression, cleaned_translations[i]).group(1)
                             tmp2 = re.search(b_num_expression, cleaned_translations[i]).group(2)
-                            cleaned_translations[
-                                i] = f'{cur_aff}{"" if cleaned_translations[i][0].isnumeric() else " "}{tmp1} {add_meaning}{tmp2} '
+                            cleaned_translations[i] = f'{cur_aff}{"" if cleaned_translations[i][0].isnumeric() else " "}{tmp1} {add_meaning}{tmp2} '
                         cleaned_translations[aff_id] = ''
                 cleaned_translations = [ct for ct in cleaned_translations if ct]
 
@@ -3829,15 +3839,13 @@ class WarodaiLoader:
                           (
                               ' (<i>а) время от 2 до 4 часов дня и ночи; б) 3 часа дня и ночи; ср.</i> <a href="#005-63-22">とき【時】2</a> <i>и</i> <a href="#008-10-52">ここのつどき</a>).',
                               ': время от 2 до 4 часов дня и ночи; 3 часа дня и ночи.'),
-                          (
-                          '<i>(1) на билет при покупке у барышника; 2) на акцию сверх номинала, при повышенной котировке)</i>.',
-                          '<i>(на билет при покупке у барышника; на акцию сверх номинала, при повышенной котировке)</i>.'),
+                          ('<i>(1) на билет при покупке у барышника; 2) на акцию сверх номинала, при повышенной котировке)</i>.',
+                           '<i>(на билет при покупке у барышника; на акцию сверх номинала, при повышенной котировке)</i>.'),
                           ('1) <i>уст., вошёл в р-н Дайто;</i> 2) <i>парк в Токио.</i>',
                            '\n1) <i>уст., вошёл в р-н Дайто;</i>\n2) <i>парк в Токио.</i>'),
-                          (
-                          '<i>(1) высшая степень духовного совершенства; 2) подвижник, достигший этой степени совершенства)</i>.',
-                          '\n1) <i>высшая степень духовного совершенства;</i>\n2) <i>подвижник, достигший этой '
-                          'степени совершенства</i>.'),
+                          ('<i>(1) высшая степень духовного совершенства; 2) подвижник, достигший этой степени совершенства)</i>.',
+                           '\n1) <i>высшая степень духовного совершенства;</i>\n2) <i>подвижник, достигший этой '
+                           'степени совершенства</i>.'),
                           ('<i>(1) о соперничестве между государствами в области науки; 2) о войне с применением '
                            'средств, созданных на основе новейших достижений науки и техники)</i>.',
                            '\n1) <i>о соперничестве между государствами в области науки;</i>\n2) <i>о войне с '
@@ -3848,9 +3856,8 @@ class WarodaiLoader:
                            'кто выполняет обеты без пострижения в монахи)</i>.',
                            '\n1) <i>приставка к посмертным буддийским именам верующих мирян;</i>\n2) <i>обозначение '
                            'тех, кто выполняет обеты без пострижения в монахи</i>.'),
-                          (
-                          '<i>(1) вид песенного сказа в XV — XVI вв.; 2) вид представлений театра марионеток в XVII — XVIII вв.)</i>.',
-                          '\n1) <i>вид песенного сказа в XV — XVI вв.;</i>\n2) <i>вид представлений театра марионеток в XVII — XVIII вв.</i>.'),
+                          ('<i>(1) вид песенного сказа в XV — XVI вв.; 2) вид представлений театра марионеток в XVII — XVIII вв.)</i>.',
+                           '\n1) <i>вид песенного сказа в XV — XVI вв.;</i>\n2) <i>вид представлений театра марионеток в XVII — XVIII вв.</i>.'),
                           ('<i>(совр.</i> Чунгбо́, <i>центральная часть Вьетнама).</i>',
                            '(<i>совр.</i> Чунгбо́).'),
                           ('(<i>т. н.</i> <a href="#003-04-08">じょうげん【上元】</a>, <a href="#007-27-72">ちゅうげん【中元】</a> '
@@ -3866,9 +3873,9 @@ class WarodaiLoader:
                            '<a href="#009-22-62">せり【芹】</a>, <a href="#000-08-32">はこべ</a>, '
                            '<a href="#006-03-68">ははこぐさ</a>, <a href="#002-63-33">ほとけのざ</a>; б) 秋の七草 <i>(осенние)</i>: '
                            '<i>см.</i> <a href="#002-25-56">あさがお</a> <i>или</i> <a href="#006-48-72">ききょう【桔梗】</a>, '
-                           '<a href="#000-13-03">くず【葛】</a>, <a href="#001-59-57">なでしこ</a>, '
+                          '<a href="#000-13-03">くず【葛】</a>, <a href="#001-59-57">なでしこ</a>, '
                            '<a href="#007-37-62">おばな【尾花】</a>, <a href="#003-47-59">おみなえし</a>, '
-                           '<a href="#003-40-34">ふじばかま</a>, <a href="#008-09-53">はぎ【萩】</a>',
+                          '<a href="#003-40-34">ふじばかま</a>, <a href="#008-09-53">はぎ【萩】</a>',
                            ''),
                           ('(<i>а) время от 4 до 6 часов дня и ночи; б) 5 часов дня и ночи; ср.</i> <a '
                            'href="#005-63-22">とき【時】2</a> <i>и</i> <a href="#008-10-52">ここのつどき</a>)',
@@ -3884,12 +3891,10 @@ class WarodaiLoader:
                            ''),
                           ('2) <i>побуд. форма гл.</i> <a href="#008-81-72">おこす【起こす】</a> <i>в других знач.</i>',
                            '2) <i>побуд. форма гл.</i> <a href="#008-81-72">おこす【起こす】</a>'),
-                          (
-                          '\n7) <i>форма потенциального залога гл.</i> <a href="#009-18-92"> とる【取る】</a> <i>во всех его знач., напр.:</i>',
-                          ''),
-                          (
-                          '\n(<i>форма побуд. залога от гл.</i> <a href="#002-28-12">おもう</a> <i>в знач.</i> 1 <i>и</i> 2)',
-                          ''),
+                          ('\n7) <i>форма потенциального залога гл.</i> <a href="#009-18-92"> とる【取る】</a> <i>во всех его знач., напр.:</i>',
+                           ''),
+                          ('\n(<i>форма побуд. залога от гл.</i> <a href="#002-28-12">おもう</a> <i>в знач.</i> 1 <i>и</i> 2)',
+                           ''),
                           ('2) <i>см.</i> <a href="#006-78-84">ちゅうきょう</a> <i>(географическое название)</i>',
                            '2) <i>(географическое название)</i> <i>см.</i> <a href="#006-78-84">ちゅうきょう</a>'),
                           ('1): 彼は人に彼一人でそれをやったのだと思わせた он создал впечатление, будто он это сделал один;',

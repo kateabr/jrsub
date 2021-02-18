@@ -281,7 +281,7 @@ class YarxiTests(unittest.TestCase):
                               ['[при] соединять', 'согласовывать', 'сличать, сопоставлять', 'подсекать (рыбу)'])
 
         # 裡 -> edited の裡に at tango table into just 裡
-        self.assertEqual(self.yd.lookup_translations_only('裏', 'うち'), ['〈-no〉 〈~ni〉 в (условиях чего-л.)'])
+        self.assertEqual(self.yd.lookup_translations_only('裏', 'うち'), ['〈-no〉＿〈~ni〉 в (условиях чего-л.)'])
         self.assertEqual(self.yd.lookup_translations_only('裡', 'うち'), self.yd.lookup_translations_only('裏', 'うち'))
 
         # 逆う -> 逆らう

@@ -140,6 +140,7 @@ class YarxiLoader:
     _unreliable_translations: bool = True
     _unreliable_translations_pref: str = '〈возм. перевод〉 '
     _in_compounds_pref: str = '〈в сочет.〉 '
+    _highlighting = ('《', '》')
 
     _last_eid: int = -1
 
@@ -200,10 +201,13 @@ class YarxiLoader:
         self._unreliable_translations = mode
 
     def set_unreliable_translation_preffix(self, pref: str):
-        self._unreliable_translations_pref = pref
+        self._unreliable_translations_pref = pref + ' '
 
     def set_compounds_pref(self, pref: str):
-        self._in_compounds_pref = pref
+        self._in_compounds_pref = pref + ' '
+
+    def set_highlighting(self, left: str, right: str):
+        self._highlighting = (left, right)
 
     def _normalize_kana(self, key: str, mode: str) -> str:
         if mode == 'right':
@@ -343,7 +347,10 @@ class YarxiLoader:
         text = re.sub(r'(.\\?[!?:;.])([а-яА-Я0-9([])', lambda m: f'{m.group(1)} {m.group(2)}', text)
         text = re.sub(r'([^\d]),([^=\s])', lambda m: f'{m.group(1)}, {m.group(2)}', text)
         text = re.sub(r'([^〉]),([^\d\s])', lambda m: f'{m.group(1)}, {m.group(2)}', text)
+        text = text.replace('〉 〈~', '〉＿〈~')
         text = text.replace('  ', ' ')
+        if self._highlighting != ('《', '》'):
+            text = text.replace('《', self._highlighting[0]).replace('》', self._highlighting[1])
         return text.lower().strip()
 
     def _convert_to_entry_tango(self, info: Tuple[str, str, str, str, str, str, str, str, str]) -> List[YarxiEntry]:
@@ -524,7 +531,7 @@ class YarxiLoader:
                         for tr in g_tr.group(1):
                             if tr != '0':
                                 temp.append(generic_translations[tr])
-                    translation = f"《{' или '.join(temp)}》"
+                    translation = f"{self._highlighting[0]}{' или '.join(temp)}{self._highlighting[1]}"
                 else:
                     translation = self._clean_text(translation)
 
@@ -582,13 +589,19 @@ class YarxiLoader:
             translations = re.sub(r'(\+{\(.*\)})', '', translations)
             translations = re.sub(r'(\^8\d+)', '', translations)
 
-            generic_translations = {'@9': '《тж. счетный суффикс》', '@3': '', '@7': '', '@6': rus_nick, '@4': rus_nick,
-                                    '@2': rus_nick, '@1': rus_nick, '@5': '《встречается в географических названиях》',
-                                    '@8': '《в сочетаниях идиоматичен》', '@l': '《употребляется в летоисчислении》',
-                                    '@0': '《употребляется фонетически》', '@\\0': '《употребляется фонетически》',
-                                    '@\\8': rus_nick + ' 《в сочетаниях идиоматичен》', '@\\1': rus_nick + ' 《сочетания неупотребительны》',
-                                    '@\\4': rus_nick, '@\\5': rus_nick + ' 《встречается в географических названиях》',
-                                    '@\\2': rus_nick + ' 《сочетания малоупотребительны》'}
+            generic_translations = {'@9': f'{self._highlighting[0]}тж. счетный суффикс{self._highlighting[1]}',
+                                    '@3': '', '@7': '', '@6': rus_nick, '@4': rus_nick,
+                                    '@2': rus_nick, '@1': rus_nick,
+                                    '@5': f'{self._highlighting[0]}встречается в географических названиях{self._highlighting[1]}',
+                                    '@8': f'{self._highlighting[0]}в сочетаниях идиоматичен{self._highlighting[1]}',
+                                    '@l': f'{self._highlighting[0]}употребляется в летоисчислении{self._highlighting[1]}',
+                                    '@0': f'{self._highlighting[0]}употребляется фонетически{self._highlighting[1]}',
+                                    '@\\0': f'{self._highlighting[0]}употребляется фонетически{self._highlighting[1]}',
+                                    '@\\8': rus_nick + f' {self._highlighting[0]}в сочетаниях идиоматичен{self._highlighting[1]}',
+                                    '@\\1': rus_nick + f' {self._highlighting[0]}сочетания неупотребительны{self._highlighting[1]}',
+                                    '@\\4': rus_nick,
+                                    '@\\5': rus_nick + f' {self._highlighting[0]}встречается в географических названиях{self._highlighting[1]}',
+                                    '@\\2': rus_nick + f' {self._highlighting[0]}сочетания малоупотребительны{self._highlighting[1]}'}
 
             for translation in [tr for tr in translations.split('/') if tr]:
                 nums_present = re.search(r'\((\d*)\)', translation)
