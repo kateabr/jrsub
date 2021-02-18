@@ -27,7 +27,7 @@ wd = wl.load() // словарь
 * возвращает список `SearchResult`, включающих в себя поля `lexeme`, `reading` и `translation` из подходящих записей;
 * все три поля являются списками строк.
 
-`yd.lookup_translation_only(lexeme: str[, reading: str, search_mode: SearchMode])`→ `[str]`
+`yd.lookup_translations_only(lexeme: str[, reading: str, search_mode: SearchMode])`→ `[str]`
 * возвращает значения полей "перевод" из подходящих записей в виде одномерного списка строк.
 
 Параметр | Допустимые значения | Обязательный параметр
