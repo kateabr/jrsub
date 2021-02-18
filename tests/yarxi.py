@@ -445,6 +445,15 @@ class YarxiTests(unittest.TestCase):
                     bad.append(e)
         self.assertEqual(bad, [])
 
+    def test_all_refs_verified(self):
+        us_nv = []
+        for entry in self.yd._entries:
+            for ref in entry.references:
+                if ref.usable and not ref.verified:
+                    us_nv.append(entry)
+
+        self.assertEqual(us_nv, [])
+
 
 if __name__ == '__main__':
     unittest.main()

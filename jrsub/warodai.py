@@ -172,7 +172,7 @@ class WarodaiDictionary:
 
 class WarodaiLoader:
     _entries: List[WarodaiEntry]
-    _transliterate_collocations: bool
+    _transliterate_collocations: bool = True
     _normalizer: {str: str} = {'noaru': 'no aru',
                                'no': 'no',
                                'taru': 'taru',
@@ -1669,10 +1669,7 @@ class WarodaiLoader:
         return string
 
     def rescan(self, fname: str = "../dictionaries/source/warodai_22.03.2020.txt",
-               transliterate_collocations: bool = True,
                show_progress: bool = True) -> WarodaiDictionary:
-        self._transliterate_collocations = transliterate_collocations
-
         self._entries, temp_entries = self._load_db(fname, show_progress)
 
         self._max_eid = max([WarodaiEid(e.eid) for e in self._entries if e.eid.startswith('009')])
@@ -1680,8 +1677,7 @@ class WarodaiLoader:
         self._entries.append(WarodaiEntry(eid=self._max_eid.inc(), reading=['つく'], lexeme=['尽く'], translation={},
                                           references={'1': [
                                               WarodaiReference(meaning_number=['-1'], eid='008-04-11',
-                                                               mode='письменная форма гл.',
-                                                               verified=True, usable=True)]}))
+                                                               mode='письменная форма гл.', usable=True)]}))
         self._entries[self._get_entry_index_by_eid('003-19-23')].references['1'][0].eid = str(self._max_eid)
         self._entries.append(WarodaiEntry(eid=self._max_eid.inc(), reading=['ざいく'], lexeme=['細工'],
                                           translation={
@@ -1839,7 +1835,6 @@ class WarodaiLoader:
                         ref = WarodaiReference(eid=decomposed_tr.group('eid'),
                                                mode=re.sub(r',?\s?см.', '', decomposed_tr.group('mode')[1:-1]),
                                                body=body.strip(),
-                                               verified=True,
                                                usable=True)
                         if decomposed_tr.group('meaning_number') is not None:
                             ref.meaning_number.extend(decomposed_tr.group('meaning_number').strip().split(', '))
@@ -2229,7 +2224,7 @@ class WarodaiLoader:
                                      eid='||',
                                      reading=_resolve_ref_reading(readings, global_quasi_reference.group('lexeme')),
                                      translation={},
-                                     references={'1': [WarodaiReference(eid=eid, verified=True, usable=True,
+                                     references={'1': [WarodaiReference(eid=eid, usable=True,
                                                                         mode=mode[1:-2] if mode else '',
                                                                         meaning_number=list(references.keys()))]}))
 

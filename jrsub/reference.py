@@ -7,7 +7,6 @@ class Reference:
     eid: str
     mode: str = ''
     lexeme: List[str] = field(default_factory=list)
-    verified: bool = False
     usable: bool = False
 
 
@@ -30,4 +29,4 @@ class WarodaiReference(Reference):
 
 @dataclass
 class YarxiReference(Reference):
-    pass
+    verified: bool = False

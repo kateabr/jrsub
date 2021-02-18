@@ -105,10 +105,6 @@ class YarxiDictionary:
                     continue
                 if reference_verified:
                     translations.extend([' '.join([reference_mode, tr]).strip() for tr in referenced_entry.translation])
-                elif self._unreliable_translations:
-                    translations.extend(
-                        [self._unreliable_translations_pref + reference_mode + tr for tr in
-                         referenced_entry.translation])
 
                 usable_refs.extend([ref for ref in referenced_entry.references if ref.usable])
                 visited_references.append(referenced_entry.eid)
@@ -136,9 +132,7 @@ class YarxiLoader:
     _entries: List[YarxiEntry]
     _kanji_db: {str: (str, str, str, str)}
 
-    _transliterate_collocations: bool
-    _unreliable_translations: bool = True
-    _unreliable_translations_pref: str = '〈возм. перевод〉 '
+    _transliterate_collocations: bool = True
     _in_compounds_pref: str = '〈в сочет.〉 '
     _highlighting = ('《', '》')
 
@@ -196,12 +190,6 @@ class YarxiLoader:
 
     def toggle_transliteration(self, mode: bool):
         self._transliterate_collocations = mode
-
-    def toggle_unreliable_translations(self, mode: bool):
-        self._unreliable_translations = mode
-
-    def set_unreliable_translation_preffix(self, pref: str):
-        self._unreliable_translations_pref = pref + ' '
 
     def set_compounds_pref(self, pref: str):
         self._in_compounds_pref = pref + ' '
@@ -766,9 +754,7 @@ class YarxiLoader:
                                                 if e.kanji in ext.lexeme and e.rus_nick][0]]
                 self._entries.append(ext)
 
-    def rescan(self, fname: str = "../dictionaries/source/yarxi_3.02.2021.db", transliterate_collocations: bool = True, show_progress: bool = True) -> YarxiDictionary:
-        self._transliterate_collocations = transliterate_collocations
-
+    def rescan(self, fname: str = "../dictionaries/source/yarxi_3.02.2021.db", show_progress: bool = True) -> YarxiDictionary:
         self._kanji_db = self._load_kanji_db(fname, show_progress)
         self._entries = self._load_db(fname, show_progress)
         self._resolve_references(show_progress)
