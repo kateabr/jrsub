@@ -52,3 +52,4 @@ jobs:
           heroku container:release web --app jsub-demo
         on:
           branch: master
+          tags: true
