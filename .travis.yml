@@ -51,5 +51,5 @@ jobs:
         script: docker push registry.heroku.com/jsub-demo/web &&
           heroku container:release web --app jsub-demo
         on:
-          branch: master
-          tags: true
+          condition: ($TRAVIS_BRANCH == "master" || -n $TRAVIS_TAG)
+          all_branches: true
