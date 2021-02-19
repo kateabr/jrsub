@@ -1666,7 +1666,7 @@ class WarodaiLoader:
     def _normalize_kana(self, string: str) -> str:
         if self._transliterate_collocations:
             return self._normalizer[_hiragana_to_latin(string)]
-        return string
+        return string.replace('～', '~').replace('…', '-').replace('＝', '').replace('｜', '|')
 
     def rescan(self, fname: str = "../dictionaries/source/warodai_22.03.2020.txt",
                show_progress: bool = True) -> WarodaiDictionary:
