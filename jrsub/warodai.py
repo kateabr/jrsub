@@ -1653,11 +1653,12 @@ class WarodaiLoader:
                                'iru': 'iru',
                                'タバコwo吹kasu': 'TABAKO 【タバコ】 wo fukasu 【吹かす】',
                                '版図, 戸籍': 'hanto 【版図】, koseki 【戸籍】',
-                               '変dato': 'hen 【変】 da to'}
+                               '変dato': 'hen 【変】 da to',
+                               '＋': '~…'}
     _max_eid: WarodaiEid
     _highlighting = ('《', '》')
 
-    def toggle_transliteration(self, mode: bool):
+    def enable_transliteration(self, mode: bool):
         self._transliterate_collocations = mode
 
     def set_highlighting(self, left: str, right: str):
@@ -1666,7 +1667,7 @@ class WarodaiLoader:
     def _normalize_kana(self, string: str) -> str:
         if self._transliterate_collocations:
             return self._normalizer[_hiragana_to_latin(string)]
-        return string.replace('～', '~').replace('…', '-').replace('＝', '').replace('｜', '|')
+        return string.replace('～', '~').replace('…', '-').replace('＝', '').replace('｜', '|').replace('＋', '~…')
 
     def rescan(self, fname: str = "../dictionaries/source/warodai_22.03.2020.txt",
                show_progress: bool = True) -> WarodaiDictionary:
@@ -1957,7 +1958,8 @@ class WarodaiLoader:
                 tr_temp = re.sub(r'{.+}', '', tr_temp)
 
                 tr_temp = re.sub(r'(～)([^\s]+?\s)', r'\1 ', tr_temp + ' ')
-                tr_temp = re.sub(r'＝([^～]+)～', '', tr_temp)
+                tr_temp = re.sub(r'(＝[^\s]+)\s', ' ', tr_temp)
+                tr_temp = re.sub(r'(＋[^\s]+)\s', ' ', tr_temp)
                 tr_temp = re.sub(r'…([^～]+)～', '', tr_temp)
                 tr_temp = re.sub(r'｜([^～]+)～', '', tr_temp)
                 tr_temp = re.sub(r'(…?～ )', '', tr_temp)
@@ -2054,7 +2056,7 @@ class WarodaiLoader:
                         num = re.search(b_num_expression, cleaned_translations[i])
                     if num is not None:
                         cur_id = i
-                    elif cleaned_translations[i][0] in ['～', '｜', '＝', '…', '['] or _is_kanji(
+                    elif cleaned_translations[i][0] in ['～', '｜', '＝', '…', '[', '＋'] or _is_kanji(
                             cleaned_translations[i][0]) \
                             or _is_hira_or_kata(cleaned_translations[i][0]) or cleaned_translations[i].startswith('<i>') \
                             or re.search(r'^[а-ж]\)\s', cleaned_translations[i]) is not None or re.search(r'^[а-я]+',
@@ -2142,8 +2144,8 @@ class WarodaiLoader:
 
             for i, _ in enumerate(cleaned_translations):
                 old_kp = list({x[:-1] if re.search(r'^[^(]+\)', x) else x for x in
-                               re.findall(r'[^а-я>【]([…～＝｜][^\s<,;a-zа-я».]+)', ' ' + cleaned_translations[i])})
-                for j, kana_part in enumerate(sorted([re.split(r'([…～＝｜])', k) for k in old_kp], reverse=True)):
+                               re.findall(r'[^а-я>【]([…～＝｜＋][^\s<,;a-zа-я».]+)', ' ' + cleaned_translations[i])})
+                for j, kana_part in enumerate(sorted([re.split(r'([…～＝｜＋])', k) for k in old_kp], reverse=True)):
                     kana_part = [part for part in kana_part[1:] if part]
                     kana_part_latin = [(self._normalize_kana(part), part) for part in kana_part]
                     for kp1, kp2 in list(zip([x for x in kana_part_latin if kana_part_latin.index(x) % 2 == 0],
@@ -3903,6 +3905,7 @@ class WarodaiLoader:
                           ('1): 彼は人に彼一人でそれをやったのだと思わせた он создал впечатление, будто он это сделал один;',
                            '1) ＝変だと～ производить странное впечатление; наводить на мысль, что <i>что-л.</i> странно;'),
                           (', напр.:</i>', '</i>'),
+                          ('～…', '＋'),
                           ('ё', 'е')]
 
             for src, trg in tqdm(to_replace, desc="[Warodai] Preprocessing raw source".ljust(34),

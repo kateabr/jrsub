@@ -188,7 +188,7 @@ class YarxiLoader:
                                       '*-1': '(kara)',
                                       '*-5': '(de)', '*-9': '(suru)'}
 
-    def toggle_transliteration(self, mode: bool):
+    def enable_transliteration(self, mode: bool):
         self._transliterate_collocations = mode
 
     def set_compounds_pref(self, pref: str):

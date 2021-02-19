@@ -195,6 +195,12 @@ class MyTestCase(unittest.TestCase):
                               ['(《санскр.》 arhan) 《буд.》 архан 《высшая степень духовного совершенства》',
                                '(《санскр.》 arhan) 《буд.》 архан 《подвижник, достигший этой степени совершенства》'])
 
+        self.assertCountEqual(self.wd.lookup_translations_only('軈て', 'やがて'),
+                              ['скоро, вскоре; немного спустя', 'почти', '〈~…de aru〉 《что-л.》 [есть] не что иное, как…'])
+        self.assertCountEqual(self.wd.lookup_translations_only('敢えて', 'あえて'),
+                              ['смело, решительно; 〈~…suru〉 отваживаться, осмеливаться 《что-л. сделать》; идти 《на что-л.》',
+                               'определенно, твердо'])
+
     def test_bad_readings(self):
         bad = []
         for e in self.wd._entries:
