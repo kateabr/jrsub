@@ -253,7 +253,7 @@ class YarxiTests(unittest.TestCase):
                                'яо, мифический китайский император, четвертый из пяти совершенномудрых государей древности (2356-2258 до н. э.)'])
 
         self.assertCountEqual(self.yd.lookup_translations_only('諄', 'じゅん'),
-                              ['〈в сочет.〉 назойливый', '《мужские имена》'])
+                              ['〈в сочет.〉 назойливый', '《мужское имя》'])
 
         self.assertEqual(self.yd.lookup_translations_only('吾', 'ご'),
                          self.yd.lookup_translations_only('吾', 'あが'))
@@ -327,6 +327,12 @@ class YarxiTests(unittest.TestCase):
         # кольцо\,,\круг\;*3\кольцевидный\,\круглый -> кольцо\,\круг\;*3\кольцевидный\,\круглый
         self.assertEqual(self.yd.lookup_translations_only('輪形', 'わがた'),
                          ['кольцо, круг; 〈~no〉 кольцевидный, круглый'])
+
+        # とうる -> とおる
+        self.assertEqual(self.yd.lookup_translations_only('透る', 'とおる'),
+                         ['проникать, проходить сквозь'])
+        self.assertCountEqual(self.yd.lookup_translations_only('亮', 'とおる'),
+                              ['《мужское имя》', '〈в сочет.〉 ясный, очевидный'])
 
     def test_matching_lexemes(self):
         self.assertEqual(self.yd.lookup_translations_only('繰り返す', 'くりかえす'),
