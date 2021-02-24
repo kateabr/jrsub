@@ -347,17 +347,15 @@ class WarodaiLoader:
                                'naraba': 'naraba',
                                'nisuru(naru)': 'ni suru (naru)',
                                'sareteiru': 'sarete iru',
-                               '的': 'teki 【的】',
-                               '的no': 'teki 【的】 no',
-                               '的ni': 'teki 【的】 ni',
-                               '[的]': '[teki 【的】]',
-                               '的[na]': 'teki 【的】 [na]',
-                               '[的no]': '[teki 【的】 no]',
-                               '的na': 'teki 【的】 na',
-                               '的[no]': 'teki 【的】 [no]',
-                               '[的]ni': '[teki 【的】] ni',
-                               '～': '~',
-                               '…': '-',
+                               '的': 'teki',
+                               '的no': 'teki no',
+                               '的ni': 'teki ni',
+                               '[的]': '[teki]',
+                               '的[na]': 'teki [na]',
+                               '[的no]': '[teki no]',
+                               '的na': 'teki na',
+                               '的[no]': 'teki [no]',
+                               '[的]ni': '[teki] ni',
                                'gasuru(gaaru)': 'ga suru (ga aru)',
                                '[ga]aru': '[ga] aru',
                                'suru(dearu)': 'suru (de aru)',
@@ -368,8 +366,6 @@ class WarodaiLoader:
                                'toshite(suru)': 'to shite (suru)',
                                'dearu(ninaru)': 'de aru (ni naru)',
                                '[niha]': '[ni wa]',
-                               '＝': '',
-                               '｜': '|',
                                '落chiru': 'ochiru 【落ちる】',
                                'shite置ku': 'shite oku 【置く】',
                                'de飲mu': 'de nomu 【飲む】',
@@ -1653,8 +1649,16 @@ class WarodaiLoader:
                                'iru': 'iru',
                                'タバコwo吹kasu': 'TABAKO 【タバコ】 wo fukasu 【吹かす】',
                                '版図, 戸籍': 'hanto 【版図】, koseki 【戸籍】',
-                               '変dato': 'hen 【変】 da to',
-                               '＋': '~…'}
+                               '変dato': 'hen 【変】 da to'
+                               }
+    _bullet_normalizer: {str: str} = {
+        '～': '~',
+        '…': '-',
+        '＝': '',
+        '｜': '|',
+        '＋': '~…',
+        '＊': '…〉〈~'
+    }
     _max_eid: WarodaiEid
     _highlighting = ('《', '》')
 
@@ -1667,7 +1671,7 @@ class WarodaiLoader:
     def _normalize_kana(self, string: str) -> str:
         if self._transliterate_collocations:
             return self._normalizer[_hiragana_to_latin(string)]
-        return string.replace('～', '~').replace('…', '-').replace('＝', '').replace('｜', '|').replace('＋', '~…')
+        return string
 
     def rescan(self, fname: str = "../dictionaries/source/warodai_22.03.2020.txt",
                show_progress: bool = True) -> WarodaiDictionary:
@@ -1958,8 +1962,7 @@ class WarodaiLoader:
                 tr_temp = re.sub(r'{.+}', '', tr_temp)
 
                 tr_temp = re.sub(r'(～)([^\s]+?\s)', r'\1 ', tr_temp + ' ')
-                tr_temp = re.sub(r'(＝[^\s]+)\s', ' ', tr_temp)
-                tr_temp = re.sub(r'(＋[^\s]+)\s', ' ', tr_temp)
+                tr_temp = re.sub(r'([＝＋＊][^\s]+)\s', ' ', tr_temp)
                 tr_temp = re.sub(r'…([^～]+)～', '', tr_temp)
                 tr_temp = re.sub(r'｜([^～]+)～', '', tr_temp)
                 tr_temp = re.sub(r'(…?～ )', '', tr_temp)
@@ -2106,7 +2109,7 @@ class WarodaiLoader:
                         cleaned_translations[i] = f'〔{tr_idx.group("number")}〕{tr_idx.group("value")}'
                         cur_val = i
                     elif i > 0:
-                        if cleaned_translations[i].startswith('～'):
+                        if cleaned_translations[i][0] in ['～', '＊', '＝', '＋']:
                             cleaned_translations[cur_val] += ' ' + cleaned_translations[i]
                             cleaned_translations[i] = ''
                         else:
@@ -2144,12 +2147,12 @@ class WarodaiLoader:
 
             for i, _ in enumerate(cleaned_translations):
                 old_kp = list({x[:-1] if re.search(r'^[^(]+\)', x) else x for x in
-                               re.findall(r'[^а-я>【]([…～＝｜＋][^\s<,;a-zа-я».]+)', ' ' + cleaned_translations[i])})
-                for j, kana_part in enumerate(sorted([re.split(r'([…～＝｜＋])', k) for k in old_kp], reverse=True)):
+                               re.findall(r'[^а-я>【]([…～＝｜＋＊][^\s<,;a-zа-я».]+)', ' ' + cleaned_translations[i])})
+                for j, kana_part in enumerate(sorted([re.split(r'([…～＝｜＋＊])', k) for k in old_kp], reverse=True)):
                     kana_part = [part for part in kana_part[1:] if part]
-                    kana_part_latin = [(self._normalize_kana(part), part) for part in kana_part]
-                    for kp1, kp2 in list(zip([x for x in kana_part_latin if kana_part_latin.index(x) % 2 == 0],
-                                             [x for x in kana_part_latin if kana_part_latin.index(x) % 2 == 1])):
+                    kp_bullets = [(self._bullet_normalizer[part], part) for part in kana_part if kana_part.index(part) % 2 == 0]
+                    kp_collocs = [(self._normalize_kana(part), part) for part in kana_part if kana_part.index(part) % 2 == 1]
+                    for kp1, kp2 in list(zip(kp_bullets, kp_collocs)):
                         cleaned_translations[i] = cleaned_translations[i].replace(f'{kp1[1]}{kp2[1]}',
                                                                                   f'〈{kp1[0]}{kp2[0]}〉')
                 if old_kp:
@@ -3906,6 +3909,7 @@ class WarodaiLoader:
                            '1) ＝変だと～ производить странное впечатление; наводить на мысль, что <i>что-л.</i> странно;'),
                           (', напр.:</i>', '</i>'),
                           ('～…', '＋'),
+                          ('…～', '＊'),
                           ('ё', 'е')]
 
             for src, trg in tqdm(to_replace, desc="[Warodai] Preprocessing raw source".ljust(34),

@@ -95,7 +95,7 @@ class MyTestCase(unittest.TestCase):
         self.assertEqual(self.wd.lookup_translations_only('新玉'), ['〈~no〉 《поэтическое определение к таким словам, '
                                                                   'как год, месяц и т. п.》', 'неограненный '
                                                                                              'драгоценный камень'])
-        self.assertEqual(self.wd.lookup_translations_only('一元'), ['〈~no〉, 〈~teki 【的】〉 унифицированный; '
+        self.assertEqual(self.wd.lookup_translations_only('一元'), ['〈~no〉, 〈~teki〉 унифицированный; '
                                                                   'централизованный; 《филос.》 монистический',
                                                                   'первый (начальный) год 《годов правления》',
                                                                   'один юань'])
@@ -200,6 +200,15 @@ class MyTestCase(unittest.TestCase):
         self.assertCountEqual(self.wd.lookup_translations_only('敢えて', 'あえて'),
                               ['смело, решительно; 〈~…suru〉 отваживаться, осмеливаться 《что-л. сделать》; идти 《на что-л.》',
                                'определенно, твердо'])
+
+        self.assertCountEqual(self.wd.lookup_translations_only('処', 'ところ'),
+                              ['《сущ.》 место; 〈…〉＿〈~ni aru〉 находиться 《где-л.》', '《сущ.》 [определенное] место',
+                               '《сущ.》 местожительство; 《чей-л.》 дом', '《сущ. перен.》 место, сторона; черты',
+                               '《сущ.》 кое-что, что-то; то что'])
+        self.assertCountEqual(self.wd.lookup_translations_only('指揮', 'しき'),
+                              ['командование, управление; руководство; 《муз.》 дирижерство',
+                               '〈~suru〉 командовать, управлять; руководить 《кем-чем-л.》; дирижировать',
+                               '〈…〉＿〈~de〉 под управлением…'])
 
     def test_bad_readings(self):
         bad = []
