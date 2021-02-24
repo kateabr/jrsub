@@ -210,6 +210,11 @@ class MyTestCase(unittest.TestCase):
                                '〈~suru〉 командовать, управлять; руководить 《кем-чем-л.》; дирижировать',
                                '〈…〉＿〈~de〉 под управлением…'])
 
+        self.assertCountEqual(self.wd.lookup_translations_only('何処', 'とこ'),
+                              ['где?; какое место?; в каком месте?', '〈~de〉, 〈~ni〉 где?', '〈~kara〉 откуда?',
+                               '〈~e〉 куда?', '〈~demo〉, 〈~ni mo〉 [по]всюду, везде; 《с отриц.》 нигде',
+                               '〈~…ka〉 где…?', '〈~ni ka〉 где-нибудь, где-то; кое-где'])
+
     def test_bad_readings(self):
         bad = []
         for e in self.wd._entries:
