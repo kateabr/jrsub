@@ -57,8 +57,12 @@ class YarxiDictionary:
 
                 if len(weighted_res) > 1:
                     for w_r in weighted_res:
-                        for lex in self._get_entry_by_eid(w_r[1]).lexeme:
-                            w_r[0] = _distance(lexeme, lex)
+                        temp_w_rs = [_distance(lexeme, lex) for lex in self._get_entry_by_eid(w_r[1]).lexeme]
+                        non_neg_temp_w_rs = [twr for twr in temp_w_rs if twr >= 0]
+                        if non_neg_temp_w_rs:
+                            w_r[0] = min(non_neg_temp_w_rs)
+                        else:
+                            w_r[0] = max(temp_w_rs)
 
                 weighted_res.sort(key=itemgetter(0), reverse=True)
                 orders = sorted(list(set([r[0] for r in weighted_res])), reverse=True)

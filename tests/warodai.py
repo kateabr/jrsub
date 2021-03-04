@@ -215,6 +215,9 @@ class MyTestCase(unittest.TestCase):
                                '〈~e〉 куда?', '〈~demo〉, 〈~ni mo〉 [по]всюду, везде; 《с отриц.》 нигде',
                                '〈~…ka〉 где…?', '〈~ni ka〉 где-нибудь, где-то; кое-где'])
 
+        self.assertEqual(self.wd.lookup_translations_only('亡き骸'),
+                         self.wd.lookup_translations_only('亡骸'))
+
     def test_bad_readings(self):
         bad = []
         for e in self.wd._entries:
