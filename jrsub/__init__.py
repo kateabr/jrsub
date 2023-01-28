@@ -12,9 +12,17 @@ from .warodai import WarodaiLoader, WarodaiEid, WarodaiDictionary
 from .yarxi import YarxiLoader, YarxiDictionary
 
 __all__ = [
-    "WarodaiEntry", "YarxiEntry", "Entry",
-    "WarodaiReference", "YarxiReference", "Reference",
-    "SearchMode", "SearchResult",
-    "WarodaiLoader", "WarodaiEid", "WarodaiDictionary",
-    "YarxiLoader", "YarxiDictionary"
+    "WarodaiEntry",
+    "YarxiEntry",
+    "Entry",
+    "WarodaiReference",
+    "YarxiReference",
+    "Reference",
+    "SearchMode",
+    "SearchResult",
+    "WarodaiLoader",
+    "WarodaiEid",
+    "WarodaiDictionary",
+    "YarxiLoader",
+    "YarxiDictionary",
 ]

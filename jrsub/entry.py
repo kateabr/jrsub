@@ -16,7 +16,7 @@ class Entry:
 class WarodaiEntry(Entry):
     translation: {str: List[str]}
     references: {str: List[WarodaiReference]}
-    lexeme_id: str = ''
+    lexeme_id: str = ""
 
     def __eq__(self, other):
         return self.eid == other.eid
@@ -25,7 +25,7 @@ class WarodaiEntry(Entry):
         return not self.__eq__(other)
 
     def __hash__(self):
-        return int(self.eid.replace('-', ''))
+        return int(self.eid.replace("-", ""))
 
 
 @dataclass
