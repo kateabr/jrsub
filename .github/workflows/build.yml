@@ -8,22 +8,33 @@ env:
   REMOTE: handystuff.net
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
-    name: Build
+    name: Test
 
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
           python-version: 3.7
-      - run: |
-          pip install poetry
-          poetry install
+      - uses: snok/install-poetry@v1
 
-      - run: |
-          poetry run flake8 jrsub tests
-          poetry run python -m unittest discover
+      - run: poetry install
+      - run: poetry run python -m unittest discover
+
+  black:
+    runs-on: ubuntu-latest
+    name: Check
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.7
+      - uses: snok/install-poetry@v1
+
+      - run: poetry install
+      - run: poetry run black . --check
 
 #      - uses: redhat-actions/podman-login@v1
 #        if: github.ref_name == 'master'
