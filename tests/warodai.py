@@ -12,6 +12,9 @@ class MyTestCase(unittest.TestCase):
     #     self.assertEqual(self.wd.lookup_translations_only('愛', 'あい'), ['любовь'])
     #     self.assertEqual(self.wd.lookup_translations_only('ああ', 'ああ'), ['《при обращении》', '《ответное》', 'так', '《межд.》 ах!'])
 
+    def test_capital_letters_in_translation(self):
+        self.assertEqual(self.wd.lookup_translations_only('東京')[0], 'преф., г. Токио')
+
     def test_readings_lexemes(self):
         # self.assertCountEqual(self.wd.lookup('嗚呼')[0].lexeme, ['ああ', '嗚呼'])
         # self.assertCountEqual(self.wd.lookup('藹藹')[0].lexeme, ['藹々', '藹藹'])

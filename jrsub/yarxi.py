@@ -232,15 +232,15 @@ class YarxiLoader:
         else:
             return -1
 
-    def _load_kanji_db(self, fname, show_progress: bool = True) -> {str: str}:
+    def _load_kanji_db(self, fname) -> {str: str}:
         conn = sqlite3.connect(fname)
         cursor = conn.cursor()
         res = {'0': self._Kanji('', '', '', '', ''), '-1': self._Kanji('', '', '', '', '')}
 
-        kanji = cursor.execute('SELECT Nomer, Uncd, Kunyomi, Onyomi, Russian, RusNick from Kanji').fetchall()
-        for eid, uncd, kun, on, rus, rus_nick in kanji:
-            res[str(eid)] = self._Kanji(kanji=chr(int(uncd)), kun=kun, on=on, rus=rus,
-                                        rus_nick=rus_nick.lower().split('*#*')[0])
+        kanji = cursor.execute('SELECT Nomer, Uncd, Kunyomi, Onyomi, Russian, RusNick, UC, UCN from Kanji').fetchall()
+        for eid, uncd, kun, on, rus, rus_nick, capital_letters, capital_letters_nick in kanji:
+            res[str(eid)] = self._Kanji(kanji=chr(int(uncd)), kun=kun, on=on, rus=self._capitalize(rus, capital_letters),
+                                        rus_nick=self._capitalize(rus_nick, capital_letters_nick).split('*#*')[0])
         conn.close()
 
         return res
@@ -277,18 +277,42 @@ class YarxiLoader:
         cursor = conn.cursor()
         res = []
 
-        tango = cursor.execute("SELECT K1, K2, K3, K4, Kana, Reading, Russian, Nomer, Hyphens FROM Tango").fetchall()[:-1]
-        for k1, k2, k3, k4, kana, reading, translation, eid, hyphens in tqdm(tango,
-                                                                             desc='[Yarxi] Building word database'.ljust(
-                                                                                 34),
-                                                                             disable=not show_progress):
+        tango = cursor.execute("SELECT K1, K2, K3, K4, Kana, Reading, Russian, Nomer, Hyphens, UC FROM Tango").fetchall()[:-1]
+        for k1, k2, k3, k4, kana, reading, translation, eid, hyphens, capital_letters \
+                in tqdm(tango, desc='[Yarxi] Building word database'.ljust(34), disable=not show_progress):
             res.extend(self._convert_to_entry_tango(
-                (str(k1), str(k2), str(k3), str(k4), kana, reading, translation, str(eid), hyphens)))
+                (str(k1), str(k2), str(k3), str(k4), kana, reading, translation, str(eid), hyphens, capital_letters)))
         conn.close()
 
         self._last_eid = int(res[-1].eid)
 
         return res
+
+    def _capitalize(self, text: str, capital_letters: str) -> [int]:
+        def _apply_indeces(text: str, capital_letter_ids: [int]) -> str:
+            for index in capital_letter_ids:
+                text = text[0:index] + text[index].upper() + text[index + 1:]
+            return text
+
+        if capital_letters == '':
+            return text
+
+        indices = [int(ind) - 1 for ind in capital_letters.split('*') if ind != '']
+        cleaned_text = re.sub(r'\\+', '', text).replace('\'\'', '\'')
+        t_position = 0
+        ct_position = 0
+        final_indices: [int] = []
+        for index in indices:
+            while True:
+                if text[t_position] == cleaned_text[ct_position]:
+                    if ct_position == index:
+                        final_indices.append(t_position)
+                        ct_position += 1
+                        t_position += 1
+                        break
+                    ct_position += 1
+                t_position += 1
+        return _apply_indeces(text, final_indices)
 
     def _clean_text_kanji(self, text: str) -> str:
         times = 1
@@ -343,9 +367,9 @@ class YarxiLoader:
         text = text.replace('  ', ' ')
         if self._highlighting != ('《', '》'):
             text = text.replace('《', self._highlighting[0]).replace('》', self._highlighting[1])
-        return text.lower().strip()
+        return text.strip()
 
-    def _convert_to_entry_tango(self, info: Tuple[str, str, str, str, str, str, str, str, str]) -> List[YarxiEntry]:
+    def _convert_to_entry_tango(self, info: Tuple[str, str, str, str, str, str, str, str, str, str]) -> List[YarxiEntry]:
         def _resolve_readings(reading: str, variable: bool, hyphens: str) -> List[str]:
             def _resolve_hh(reading: str, hyphens: str) -> str:
                 for h_pos in re.findall(r'\d+', hyphens):
@@ -540,7 +564,8 @@ class YarxiLoader:
 
         res = []
 
-        k1, k2, k3, k4, lexeme_schema, reading, translation, eid, hyphens = info
+        k1, k2, k3, k4, lexeme_schema, reading, translation, eid, hyphens, capital_letters = info
+        translation = self._capitalize(translation, capital_letters)
 
         kanji, lexemes, variable_reading = _resolve_lexemes(lexeme_schema)
         readings = _resolve_readings(reading, variable_reading, hyphens)
@@ -759,7 +784,7 @@ class YarxiLoader:
                 self._entries.append(ext)
 
     def rescan(self, fname: str = "../dictionaries/source/yarxi_3.02.2021.db", show_progress: bool = True) -> YarxiDictionary:
-        self._kanji_db = self._load_kanji_db(fname, show_progress)
+        self._kanji_db = self._load_kanji_db(fname)
         self._entries = self._load_db(fname, show_progress)
         self._resolve_references(show_progress)
         self._extract_compound_values(self._kanji_db, show_progress)

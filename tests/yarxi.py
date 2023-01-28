@@ -9,6 +9,9 @@ from jrsub.utils import _is_hiragana
 class YarxiTests(unittest.TestCase):
     yd: YarxiDictionary = YarxiLoader().load()
 
+    def test_capital_letters_in_translation(self):
+        self.assertEqual(self.yd.lookup_translations_only("東京", ""), ['Токио'])
+
     def test_garbage_numbers_in_lexeme_schema(self):
         self.assertEqual(self.yd.lookup_translations_only('悪貨は良貨を駆逐する', 'あっかはりょうかをくちくする'),
                          ['《эк.》 «худшие деньги вытесняют из обращения лучшие» (закон грешема)'])

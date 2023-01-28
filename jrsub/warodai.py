@@ -2171,7 +2171,7 @@ class WarodaiLoader:
             for i, _ in enumerate(cleaned_translations):
                 if 'т. п.》; 《' not in cleaned_translations[i]:
                     cleaned_translations[i] = cleaned_translations[i].replace('》; 《', '; ')
-            cleaned_translations = [re.sub(r'([.;])$', '', ct.lower()).replace('́', '').strip() for ct in
+            cleaned_translations = [re.sub(r'([.;])$', '', ct).replace('́', '').strip() for ct in
                                     cleaned_translations if ct]
             return cleaned_translations
 
