@@ -12,9 +12,6 @@ class MyTestCase(unittest.TestCase):
     #     self.assertEqual(self.wd.lookup_translations_only('愛', 'あい'), ['любовь'])
     #     self.assertEqual(self.wd.lookup_translations_only('ああ', 'ああ'), ['《при обращении》', '《ответное》', 'так', '《межд.》 ах!'])
 
-    def test_capital_letters_in_translation(self):
-        self.assertEqual(self.wd.lookup_translations_only("東京")[0], "преф., г. Токио")
-
     def test_readings_lexemes(self):
         # self.assertCountEqual(self.wd.lookup('嗚呼')[0].lexeme, ['ああ', '嗚呼'])
         # self.assertCountEqual(self.wd.lookup('藹藹')[0].lexeme, ['藹々', '藹藹'])
@@ -31,7 +28,7 @@ class MyTestCase(unittest.TestCase):
         self.assertEqual(
             self.wd.lookup_translations_only("北陸道"),
             [
-                "《ист. область》 хокурикудо 《включала пров. вакаса, кага, ното, этидзэн, эттю, этиго, садо》"
+                "《ист. область》 Хокурикудо 《включала пров. Вакаса, Кага, Ното, Этидзэн, Эттю, Этиго, Садо》"
             ],
         )
         self.assertEqual(
@@ -42,7 +39,7 @@ class MyTestCase(unittest.TestCase):
             self.wd.lookup_translations_only("星合い"),
             [
                 "«встреча звезд» 《праздник, отмечаемый 7 числа 7 месяца по лунному календарю в честь "
-                "встречи двух влюбленных, согласно легенде о звездах «волопасе» и «ткачихе»》"
+                "встречи двух влюбленных, согласно легенде о звездах «Волопасе» и «Ткачихе»》"
             ],
         )
         self.assertEqual(
@@ -117,7 +114,7 @@ class MyTestCase(unittest.TestCase):
         )
         self.assertEqual(
             self.wd.lookup_translations_only("布袋"),
-            ["хотэй 《бог изобилия с большим животом и мешком на спине》"],
+            ["Хотэй 《бог изобилия с большим животом и мешком на спине》"],
         )
         self.assertEqual(
             self.wd.lookup_translations_only("程"),
@@ -269,8 +266,8 @@ class MyTestCase(unittest.TestCase):
         self.assertCountEqual(
             self.wd.lookup_translations_only("阿彌陀"),
             [
-                "(《санскр.》 amitābhā) будда амида (амитаба)",
-                "《прост.》 «лотерея амиды» 《особый вид лотереи "
+                "(《санскр.》 Amitābhā) будда Амида (Амитаба)",
+                "《прост.》 «лотерея Амиды» 《особый вид лотереи "
                 "для покупки вещей в складчину》",
             ],
         )
@@ -382,15 +379,15 @@ class MyTestCase(unittest.TestCase):
 
         self.assertCountEqual(
             self.wd.lookup_translations_only("浅草", "あさくさ"),
-            ["асакуса 《уст., вошел в р-н дайто》", "асакуса 《парк в токио》"],
+            ["Асакуса 《уст., вошел в р-н Дайто》", "Асакуса 《парк в Токио》"],
         )
 
         self.assertCountEqual(
             self.wd.lookup_translations_only("中共", "ちゅうきょう"),
             [
-                "(《сокр.》 chuugoku 【中国】 kyousantou 【共産党】) кпк 《коммунистическая партия китая》",
-                "《географическое название》 《сокр.》 кнр",
-                "《сокр.》 кнр",
+                "(《сокр.》 chuugoku 【中国】 kyousantou 【共産党】) КПК 《Коммунистическая партия Китая》",
+                "《географическое название》 《сокр.》 КНР",
+                "《сокр.》 КНР",
             ],
         )
 

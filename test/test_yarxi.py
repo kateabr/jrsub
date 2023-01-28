@@ -9,13 +9,10 @@ from jrsub.utils import _is_hiragana
 class YarxiTests(unittest.TestCase):
     yd: YarxiDictionary = YarxiLoader().load()
 
-    def test_capital_letters_in_translation(self):
-        self.assertEqual(self.yd.lookup_translations_only("東京", ""), ["Токио"])
-
     def test_garbage_numbers_in_lexeme_schema(self):
         self.assertEqual(
             self.yd.lookup_translations_only("悪貨は良貨を駆逐する", "あっかはりょうかをくちくする"),
-            ["《эк.》 «худшие деньги вытесняют из обращения лучшие» (закон грешема)"],
+            ["《эк.》 «худшие деньги вытесняют из обращения лучшие» (закон Грешема)"],
         )
 
     def test_simple_translation(self):
@@ -112,14 +109,14 @@ class YarxiTests(unittest.TestCase):
                 "старинная прическа мальчика (собранные в петли волосы "
                 "крепились над ушами, образуя «рожки»)",
                 "женская прическа "
-                "конца xix в. ("
+                "конца XIX в. ("
                 "волосы "
                 "закручивались в "
                 "высокий узел и "
                 "закреплялись "
                 "булавками)",
                 "узел агэмаки, бант с тремя петлями и двумя концами",
-                "китайская ракушка-бритва, sinonovacula constricta",
+                "китайская ракушка-бритва, Sinonovacula constricta",
             ],
         )
         self.assertEqual(
@@ -253,7 +250,7 @@ class YarxiTests(unittest.TestCase):
                 "«а», 《первая буква санскритского алфавита》",
                 "〈в сочет.〉 льстить, угодничать",
                 "〈в сочет.〉 《употребляется фонетически》",
-                "〈в сочет.〉 《сокр.》 африка",
+                "〈в сочет.〉 《сокр.》 Африка",
             ],
         )
 
@@ -268,13 +265,13 @@ class YarxiTests(unittest.TestCase):
         self.assertNotIn("q2", self.yd.lookup("甲斐甲斐しい", "かいがいしい")[0].reading)
 
         # removed 'usually in katakana' marks
-        self.assertEqual(self.yd.lookup_translations_only("伯林", "べるりん"), ["берлин"])
-        self.assertEqual(self.yd.lookup_translations_only("越南", "べとなむ"), ["вьетнам"])
-        self.assertEqual(self.yd.lookup_translations_only("越南", "えつなん"), ["вьетнам"])
+        self.assertEqual(self.yd.lookup_translations_only("伯林", "べるりん"), ["Берлин"])
+        self.assertEqual(self.yd.lookup_translations_only("越南", "べとなむ"), ["Вьетнам"])
+        self.assertEqual(self.yd.lookup_translations_only("越南", "えつなん"), ["Вьетнам"])
 
         # correct lexeme when both hiragana and katakana are present
         self.assertEqual(
-            self.yd.lookup_translations_only("聖エルモの火"), ["огни святого эльма"]
+            self.yd.lookup_translations_only("聖エルモの火"), ["огни святого Эльма"]
         )
 
         # nested translation
@@ -321,7 +318,7 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(
             self.yd.lookup_translations_only("儲かりまっか", "もうかりまっか"),
             [
-                "«как заработки?», стандартное приветствие в осакском диалекте, искаженное  «mo:karimas ka»"
+                "«Как заработки?», стандартное приветствие в осакском диалекте, искаженное  «mo:karimas ka»"
             ],
         )
 
@@ -367,13 +364,13 @@ class YarxiTests(unittest.TestCase):
 
         self.assertEqual(
             self.yd.lookup_translations_only("曳々", "えいえい"),
-            ["〈~to〉 (тянуть с выкриком) «взяли!», «дружно!», «еще раз!»"],
+            ["〈~to〉 (тянуть с выкриком) «Взяли!», «Дружно!», «Еще раз!»"],
         )
 
         self.assertCountEqual(
             self.yd.lookup_translations_only("合点", "がてん"),
             [
-                "〈~suru〉 соглашаться; кивать; 〈~ka〉 согласен?, нет возражений?",
+                "〈~suru〉 соглашаться; кивать; 〈~ka〉 Согласен?, Нет возражений?",
                 "понимание; 〈~suru〉 понимать",
             ],
         )
@@ -429,8 +426,8 @@ class YarxiTests(unittest.TestCase):
         self.assertCountEqual(
             self.yd.lookup_translations_only("尭", "ぎょう"),
             [
-                "〈в сочет.〉 император яо",
-                "яо, мифический китайский император, четвертый из пяти совершенномудрых государей древности (2356-2258 до н. э.)",
+                "〈в сочет.〉 император Яо",
+                "Яо, мифический китайский император, четвертый из пяти совершенномудрых государей древности (2356-2258 до н. э.)",
             ],
         )
 
@@ -455,7 +452,7 @@ class YarxiTests(unittest.TestCase):
 
     def test_likeliness_score(self):
         self.assertEqual(
-            self.yd.lookup_translations_only("聖エルモ"), ["огни святого эльма"]
+            self.yd.lookup_translations_only("聖エルモ"), ["огни святого Эльма"]
         )
         self.assertEqual(
             self.yd.lookup_translations_only("乱麻"),
@@ -469,8 +466,8 @@ class YarxiTests(unittest.TestCase):
         self.assertEqual(
             self.yd.lookup_translations_only("バッハ", "ばっは"),
             [
-                "[иоган себастьян] бах (немецкий композитор, 1685-1750 гг.; "
-                "нем. 《johann sebastian bach》)"
+                "[Иоган Себастьян] Бах (немецкий композитор, 1685-1750 гг.; "
+                "нем. 《Johann Sebastian Bach》)"
             ],
         )
 
